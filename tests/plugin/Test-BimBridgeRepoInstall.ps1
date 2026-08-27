@@ -63,8 +63,7 @@ if ([string]$workBuddyServer.command -ne 'powershell.exe' -or [string]@($workBud
     throw 'WorkBuddy Plugin MCP must use its relocatable verified launcher.'
 }
 
-$canonicalPromptBase64 = '6K+35LuOIGh0dHBzOi8vZ2l0aHViLmNvbS9TaWRlc3dpcGUzNzUxL2JpbS1icmlkZ2Ug5a6J6KOF5bm26YWN572uIEJJTSBCcmlkZ2XjgII='
-$canonicalPrompt = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($canonicalPromptBase64))
+$canonicalPrompt = 'Install and configure BIM Bridge from https://github.com/Sideswipe3751/bim-bridge.'
 if (-not $readme.Contains($canonicalPrompt) -or -not $install.Contains($canonicalPrompt)) {
     throw 'README.md and INSTALL.md must contain the same canonical one-line install request.'
 }

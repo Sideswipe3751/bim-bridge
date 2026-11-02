@@ -859,6 +859,20 @@ and adapting other agents remain separate future gates.
 - support Codex-only, DeepSeek-only, both, or runtime/CLI deployments without
   changing host binaries.
 
+## Licensing and legal materials
+
+The unreleased licensing-transition working tree offers original BIM Bridge
+code under PolyForm Noncommercial 1.0.0 or a separately executed commercial
+license from Sideswipe3751. Existing Apache-2.0 grants and immutable releases
+remain unchanged; third-party components retain their own licenses. See
+`docs/license-transition.md` for the boundary and preserved license record.
+New Host and public-submission archives include `LICENSE`, `NOTICE`,
+`LICENSE-APACHE-2.0`, `THIRD_PARTY_NOTICES.md`, `COMMERCIAL.md`,
+`COMMERCIAL_LICENSE_TEMPLATE.md`, and `docs/license-transition.md`.
+This changes legal-material inclusion and metadata only: it introduces no
+runtime license check, agent dependency, installer consent flow, or alteration
+to signed release manifests and their pinned artifacts.
+
 ## Installer boundary
 
 The packaging phase is active for the Codex-only alpha preview. The Codex

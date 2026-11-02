@@ -54,7 +54,8 @@ try {
     }
 
     foreach ($path in @(
-        'LICENSE',
+        'LICENSE','LICENSE-APACHE-2.0','COMMERCIAL.md',
+        'COMMERCIAL_LICENSE_TEMPLATE.md','docs\license-transition.md',
         'NOTICE',
         'README.md',
         'CHANGELOG.md',

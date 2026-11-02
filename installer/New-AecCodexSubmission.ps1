@@ -45,7 +45,12 @@ try {
     Copy-SubmissionPath (Join-Path $pluginRoot 'scripts\Get-AecCodexHostStatus.ps1') (Join-Path $stageSkillRoot 'scripts\Get-AecCodexHostStatus.ps1')
     Copy-SubmissionPath (Join-Path $pluginRoot 'scripts\Install-AecCodexHost.ps1') (Join-Path $stageSkillRoot 'scripts\Install-AecCodexHost.ps1')
     Copy-SubmissionPath (Join-Path $pluginRoot 'release-manifest.json') (Join-Path $stageSkillRoot 'release-manifest.json')
-    Copy-SubmissionPath (Join-Path $SourceRoot 'LICENSE') (Join-Path $stageRoot 'LICENSE')
+    foreach ($legalPath in @(
+        'LICENSE','LICENSE-APACHE-2.0','NOTICE','THIRD_PARTY_NOTICES.md',
+        'COMMERCIAL.md','COMMERCIAL_LICENSE_TEMPLATE.md','docs\license-transition.md'
+    )) {
+        Copy-SubmissionPath (Join-Path $SourceRoot $legalPath) (Join-Path $stageRoot $legalPath)
+    }
     Copy-SubmissionPath (Join-Path $SourceRoot 'branding\official\bim-bridge-logo-transparent.png') (Join-Path $stageRoot 'assets\aec-codex-logo-transparent.png')
 
     $publicPluginManifest = [ordered]@{
@@ -58,7 +63,7 @@ try {
         }
         homepage = [string]$listing.websiteURL
         repository = 'https://github.com/Sideswipe3751/aec-codex'
-        license = 'Apache-2.0'
+        license = 'PolyForm-Noncommercial-1.0.0'
         keywords = @('autocad', 'revit', 'autodesk', 'aec', 'codex')
         skills = './skills/'
         interface = [ordered]@{

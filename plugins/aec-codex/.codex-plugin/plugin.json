@@ -7,7 +7,7 @@
   },
   "homepage": "https://github.com/Sideswipe3751/aec-codex",
   "repository": "https://github.com/Sideswipe3751/aec-codex",
-  "license": "Apache-2.0",
+  "license": "PolyForm-Noncommercial-1.0.0",
   "keywords": ["autocad", "revit", "autodesk", "mcp", "codex"],
   "skills": "./skills/",
   "interface": {

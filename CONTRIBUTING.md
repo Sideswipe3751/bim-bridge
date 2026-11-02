@@ -57,6 +57,16 @@ See https://developercertificate.org/ for the full certificate text.
 
 ## License
 
-Unless explicitly stated otherwise, contributions intentionally submitted to
-BIM Bridge are licensed under Apache-2.0. Third-party components retain their
-existing licenses and notices.
+New contributions must be compatible with the public
+[PolyForm Noncommercial License 1.0.0](LICENSE). A DCO sign-off certifies the
+right to submit; it does not transfer copyright or authorize the maintainer
+to issue separate commercial licenses for someone else's contribution.
+
+Until a legally reviewed contributor agreement expressly authorizing both
+public and commercial licensing is in place, external code and documentation
+contributions must not be merged into the dual-licensed original code.
+Copyright owners retain their rights. Do not treat opening a pull request or
+signing the DCO as consent to commercial relicensing. Reports and suggestions
+remain welcome. Previously submitted Apache-2.0 contributions and third-party
+components retain their existing licenses and notices. See
+[the transition record](docs/license-transition.md).

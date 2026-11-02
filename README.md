@@ -1,7 +1,7 @@
 # BIM Bridge
 
 [![CI](https://github.com/Sideswipe3751/bim-bridge/actions/workflows/ci.yml/badge.svg)](https://github.com/Sideswipe3751/bim-bridge/actions/workflows/ci.yml)
-[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+[![License](https://img.shields.io/badge/license-PolyForm%20Noncommercial%201.0.0-blue.svg)](LICENSE)
 [![Release](https://img.shields.io/github/v/release/Sideswipe3751/bim-bridge?include_prereleases)](https://github.com/Sideswipe3751/bim-bridge/releases)
 
 BIM Bridge connects Codex—and, through the versioned contract, future agent
@@ -241,11 +241,33 @@ Contributions are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) before
 opening a pull request. Please report vulnerabilities privately as described
 in [SECURITY.md](SECURITY.md), not in a public issue.
 
-## License and trademarks
+## Licensing
 
-BIM Bridge original code is licensed under the
-[Apache License 2.0](LICENSE). Bundled third-party components remain under
-their respective licenses; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+**BIM Bridge — Free for Noncommercial Use, Commercial License Required**
+
+The post-transition original code is offered by Sideswipe3751 under
+[PolyForm Noncommercial License 1.0.0](LICENSE), with the required copyright
+notice in [NOTICE](NOTICE). Noncommercial use is free; you may view, copy,
+modify, and share source code according to the license. Its express permissions
+also cover the organizations listed in its Noncommercial Organizations section,
+including government institutions; organization type alone does not imply a fee.
+
+Commercial uses outside those permissions, such as ordinary paid BIM project
+work or commercial software integration, require a separate commercial license.
+See [COMMERCIAL.md](COMMERCIAL.md) for scope, individual/seat/enterprise licensing,
+and **Contact for Pricing**. Contact: **TODO: provide commercial licensing contact**.
+The [commercial agreement template](COMMERCIAL_LICENSE_TEMPLATE.md) is a draft
+for legal review and grants no rights until a completed agreement is executed.
+
+Previously published Apache-2.0 code retains its existing rights, including
+commercial use under that license. The change is not retroactive; see
+[the transition record](docs/license-transition.md) and the preserved
+[Apache-2.0 text](LICENSE-APACHE-2.0). The repository remains Public and
+source-available; the noncommercial license is not OSI-approved open source.
+Third-party components keep their own licenses and notices; see
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+
+## Trademarks
 
 Autodesk, AutoCAD, and Revit are trademarks or registered trademarks of
 Autodesk, Inc. BIM Bridge is not affiliated with or endorsed by Autodesk.

@@ -84,7 +84,8 @@ $stageRoot = Join-Path $temporaryRoot 'bim-bridge'
 New-Item -ItemType Directory -Force -Path $stageRoot,$OutputDirectory | Out-Null
 try {
     foreach ($path in @(
-        'LICENSE','NOTICE','README.md','CHANGELOG.md','SECURITY.md','THIRD_PARTY_NOTICES.md',
+        'LICENSE','LICENSE-APACHE-2.0','COMMERCIAL.md',
+        'COMMERCIAL_LICENSE_TEMPLATE.md','docs\license-transition.md','NOTICE','README.md','CHANGELOG.md','SECURITY.md','THIRD_PARTY_NOTICES.md',
         'installer\Install-BimBridge.ps1','installer\Start-BimBridgeMcp.ps1',
         'plugins\bim-bridge\.codex-plugin\plugin.json',
         'plugins\bim-bridge\scripts\AutodeskProductDiscovery.ps1',

@@ -2,7 +2,7 @@
 
 Effective date: August 11, 2026
 
-BIM Bridge is open-source software that connects an authorized agent adapter to
+BIM Bridge is source-available software that connects an authorized agent adapter to
 Autodesk AutoCAD and Revit running on the same Windows computer. The BIM Bridge project does not
 operate a hosted MCP service, advertising service, analytics service, or user
 account system.

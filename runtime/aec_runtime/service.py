@@ -7,6 +7,7 @@ import uuid
 from typing import Any, Iterable
 
 from .audit import AuditTrail, ExecutionJournal
+from . import coordination, family_sessions, job_provider
 from .capabilities import (
     CapabilityDefinition,
     CapabilityRegistry,
@@ -47,6 +48,8 @@ REVIT_CAPTURE_TOOL = {
         "type": "object",
         "properties": {
             "instanceId": {"type": "string", "description": "Exact running Revit instance."},
+            "taskId": {"type": "string", "minLength": 1},
+            "taskToken": {"type": "string", "minLength": 1},
             "applicationVersion": {"type": "string", "pattern": "^[0-9]{4}$"},
             "documentTitle": {"type": "string"},
             "viewId": {"type": "integer", "minimum": 1},
@@ -84,6 +87,11 @@ def _validate_capture_arguments(arguments: dict[str, Any]) -> dict[str, Any]:
     unknown = sorted(set(arguments) - set(properties))
     if unknown:
         raise RuntimeRequestError("Unknown capture argument(s): " + ", ".join(unknown))
+    if ("taskId" in arguments) != ("taskToken" in arguments):
+        raise RuntimeRequestError("Capture taskId and taskToken must be supplied together")
+    for key in ("taskId", "taskToken"):
+        if key in arguments and (not isinstance(arguments[key], str) or not arguments[key].strip()):
+            raise RuntimeRequestError("Capture task credentials must be non-empty strings")
     selectors = [name for name in ("viewId", "viewUniqueId", "viewName") if name in arguments]
     if len(selectors) > 1:
         raise RuntimeRequestError("Pass only one of viewId, viewUniqueId, or viewName")
@@ -198,6 +206,14 @@ class BimBridgeRuntime:
             raise RuntimeRequestError("Request application or intent is invalid")
         if not isinstance(release, str) or not isinstance(capability_id, str):
             raise RuntimeRequestError("Request release and capabilityId are required")
+        if capability_id == f"{application}.task.coordination":
+            coordination.validate_control(request.get("arguments"), intent)
+            if type(request.get("dryRun")) is not bool:
+                raise RuntimeRequestError("Task coordination dryRun must be boolean")
+            if type(request.get("timeoutSeconds")) is not int or not 1 <= request["timeoutSeconds"] <= 1800:
+                raise RuntimeRequestError("Task coordination timeoutSeconds must be an integer within contract bounds")
+        if capability_id == "revit.family.session":
+            family_sessions.validate(request.get("arguments"), intent)
         plan = self.capabilities.resolve(
             capability_id,
             application=application,
@@ -315,7 +331,9 @@ class BimBridgeRuntime:
                 self.verifier.verify(
                     request.get("verification"),
                     lambda capability_id, arguments: self._execute_verification_check(
-                        instance, capability_id, arguments
+                        instance, capability_id,
+                        {**arguments, **{key: request.get("arguments", {})[key] for key in ("taskId", "taskToken") if key in request.get("arguments", {})}}
+                        if isinstance(arguments, dict) else arguments,
                     ),
                 )
                 if provider_result.get("status") == "succeeded"
@@ -358,19 +376,38 @@ class BimBridgeRuntime:
         instance: dict[str, Any], request: dict[str, Any]
     ) -> dict[str, Any]:
         capability_id = str(request["capabilityId"])
+        if capability_id == f"{instance['application']}.task.coordination":
+            value = coordination.execute_control(
+                instance, request.get("arguments"), str(request["intent"]),
+                dry_run=request.get("dryRun", False),
+                timeout=int(request.get("timeoutSeconds", 30)), target=request["target"],
+            )
+            return {"status": "succeeded", "result": value}
+        if capability_id == "revit.family.session":
+            return family_sessions.execute(instance, request.get("arguments"), str(request["intent"]),
+                dry_run=request.get("dryRun", False), timeout=int(request.get("timeoutSeconds", 30)))
         if capability_id.endswith(".document.info"):
             value = connector_request(instance, "GET", "/v1/info")
             return {"status": "succeeded", "result": value}
         if capability_id.endswith(".selection.read"):
+            arguments = dict(request.get("arguments", {}))
+            if arguments.get("taskId") is not None or arguments.get("taskToken") is not None:
+                return execute_connector_operation(
+                    instance, "selection.read", {}, "read", int(request.get("timeoutSeconds", 30)),
+                    task_id=arguments.get("taskId"), task_token=arguments.get("taskToken"),
+                )
             value = connector_request(instance, "GET", "/v1/selection")
             return {"status": "succeeded", "result": value}
         if capability_id == "revit.view.capture":
+            arguments = dict(request.get("arguments", {}))
+            task_id, task_token = arguments.pop("taskId", None), arguments.pop("taskToken", None)
             return execute_connector_operation(
                 instance,
                 "view.capture",
-                dict(request.get("arguments", {})),
+                arguments,
                 "read",
                 int(request.get("timeoutSeconds", 30)),
+                task_id=task_id, task_token=task_token,
             )
         if capability_id.endswith(".code.read") or capability_id.endswith(".code.write"):
             return execute_connector_request(
@@ -388,6 +425,14 @@ class BimBridgeRuntime:
         if capability_id == f"{application}.document.info":
             return connector_request(instance, "GET", "/v1/info")
         if capability_id == f"{application}.selection.read":
+            if arguments.get("taskId") is not None or arguments.get("taskToken") is not None:
+                value = execute_connector_operation(
+                    instance, "selection.read", {}, "read", 30,
+                    task_id=arguments.get("taskId"), task_token=arguments.get("taskToken"),
+                )
+                if value.get("status") != "succeeded":
+                    raise RuntimeRequestError("Task-scoped selection read-back failed")
+                return value.get("result")
             return connector_request(instance, "GET", "/v1/selection")
         raise RuntimeRequestError("Verification checks may use only structured read-back capabilities")
 
@@ -490,12 +535,15 @@ class BimBridgeRuntime:
         self.audit.record(
             request["correlationId"],
             "execution.completed",
-            {"status": result.get("status"), "rolledBack": result.get("rolledBack")},
+            {"status": result.get("status"), "rolledBack": result.get("rolledBack"), "taskId": arguments.get("taskId")},
         )
         return result
 
     def list_providers(self, probe: bool = False) -> dict[str, Any]:
         result = self.providers.list(probe=probe)
+        result["providers"].append(coordination.descriptor(probe))
+        result["providers"].append(family_sessions.descriptor(probe))
+        result["providers"].append(job_provider.descriptor(probe))
         instances, warnings = load_instances()
         ready = [
             instance
@@ -523,6 +571,12 @@ class BimBridgeRuntime:
     def search_provider_tools(
         self, query: str, provider_id: str | None, limit: int
     ) -> dict[str, Any]:
+        if provider_id == job_provider.PROVIDER_ID:
+            return job_provider.search(query, limit)
+        if provider_id == family_sessions.PROVIDER_ID:
+            return family_sessions.search(query, limit)
+        if provider_id == coordination.COORDINATION_PROVIDER_ID:
+            return coordination.search(query, limit)
         if provider_id == REVIT_HOST_PROVIDER_ID:
             return {
                 "tools": [
@@ -550,9 +604,17 @@ class BimBridgeRuntime:
                 }
             )
             result["tools"] = result["tools"][:limit]
+        if provider_id is None:
+            result["tools"] = (result["tools"] + coordination.search(query, limit)["tools"] + family_sessions.search(query, limit)["tools"] + job_provider.search(query, limit)["tools"])[:limit]
         return result
 
     def provider_schema(self, provider_id: str, tool_name: str) -> dict[str, Any]:
+        if provider_id == job_provider.PROVIDER_ID:
+            return job_provider.schema(tool_name)
+        if provider_id == family_sessions.PROVIDER_ID:
+            return family_sessions.schema(tool_name)
+        if provider_id == coordination.COORDINATION_PROVIDER_ID:
+            return coordination.schema(tool_name)
         if provider_id == REVIT_HOST_PROVIDER_ID:
             if tool_name != REVIT_CAPTURE_TOOL["name"]:
                 raise RuntimeRequestError(
@@ -595,7 +657,8 @@ class BimBridgeRuntime:
         capture_arguments.setdefault("fitDirection", "horizontal")
         try:
             connector_result = execute_connector_operation(
-                instance, "view.capture", capture_arguments, "read", timeout
+                instance, "view.capture", capture_arguments, "read", timeout,
+                task_id=values.get("taskId"), task_token=values.get("taskToken"),
             )
         except Exception as exc:
             self.audit.record(request["correlationId"], "execution.failed", {"error": str(exc)})
@@ -645,6 +708,12 @@ class BimBridgeRuntime:
         dry_run: bool,
         timeout: int,
     ) -> dict[str, Any]:
+        if provider_id == job_provider.PROVIDER_ID:
+            return job_provider.invoke(self, tool_name, arguments, requested_access, dry_run, timeout)
+        if provider_id == family_sessions.PROVIDER_ID:
+            return family_sessions.invoke(self, tool_name, arguments, requested_access, dry_run, timeout)
+        if provider_id == coordination.COORDINATION_PROVIDER_ID:
+            return coordination.invoke(self, tool_name, arguments, requested_access, dry_run, timeout)
         if provider_id == REVIT_HOST_PROVIDER_ID:
             if tool_name != REVIT_CAPTURE_TOOL["name"]:
                 raise RuntimeRequestError(
@@ -660,6 +729,11 @@ class BimBridgeRuntime:
                 f"{provider_id}.{tool_name} is not classified read-only; use the write provider tool"
             )
         application, target = self._provider_target(provider_id)
+        # Application-global providers cannot present a connector task token or
+        # atomically prove which instance they operate. Refuse before execution.
+        instances, _ = load_instances()
+        if any(item.get("application") == application and "task.coordination" in item.get("capabilities", []) for item in instances):
+            raise RuntimeRequestError("This provider cannot participate in instance task coordination; use the instance-aware connector")
         capability = CapabilityDefinition(
             capability_id=f"{application}.provider.{requested_access}",
             application=application,

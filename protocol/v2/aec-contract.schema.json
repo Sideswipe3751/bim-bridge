@@ -11,6 +11,113 @@
     { "$ref": "#/$defs/approvalGrant" }
   ],
   "$defs": {
+    "familySession": {
+      "description": "Task-owned resident family lifecycle arguments. Identity and policy use the ordinary execution target; tokens are redacted possession credentials. begin creates a new output; later actions must address the same job/document name.",
+      "type": "object", "additionalProperties": false,
+      "required": ["action", "jobId", "documentName", "taskId", "taskToken"],
+      "properties": {
+        "action": { "enum": ["begin", "prepare_view", "save_close", "abort"] },
+        "jobId": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$" },
+        "documentName": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$" },
+        "templatePath": { "type": "string", "minLength": 1, "maxLength": 2048 },
+        "taskId": { "type": "string", "minLength": 1, "maxLength": 512 },
+        "taskToken": { "type": "string", "minLength": 1, "maxLength": 512, "writeOnly": true, "x-sensitive": true }
+      },
+      "allOf": [{ "if": { "properties": { "action": { "const": "begin" } } }, "then": { "required": ["templatePath"] }, "else": { "not": { "required": ["templatePath"] } } }]
+    },
+    "familyJobPackage": {
+      "description": "Immutable prepared job data. Runtime validation additionally enforces canonical JSON byte bounds, absolute RFT paths, finite numeric values, and the content hash. No model SDK or reasoning is included.",
+      "type": "object", "additionalProperties": false,
+      "required": ["jobId", "templatePath", "documentName", "buildCode", "verifyCode", "source", "expectedDimensions"],
+      "properties": {
+        "jobId": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$" },
+        "documentName": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$" },
+        "templatePath": { "type": "string", "minLength": 1, "maxLength": 2048 },
+        "buildCode": { "type": "string", "minLength": 1, "maxLength": 200000 },
+        "verifyCode": { "type": "string", "minLength": 1, "maxLength": 200000 },
+        "source": { "oneOf": [{ "type": "string", "maxLength": 16384 }, { "type": "object" }] },
+        "expectedDimensions": {
+          "type": "object", "additionalProperties": false,
+          "required": ["widthMm", "depthMm", "heightMm"],
+          "properties": {
+            "widthMm": { "type": "number", "exclusiveMinimum": 0, "maximum": 100000 },
+            "depthMm": { "type": "number", "exclusiveMinimum": 0, "maximum": 100000 },
+            "heightMm": { "type": "number", "exclusiveMinimum": 0, "maximum": 100000 },
+            "toleranceMm": { "type": "number", "exclusiveMinimum": 0, "maximum": 100000 }
+          }
+        }
+      }
+    },
+    "taskControl": {
+      "description": "Agent-neutral instance task control arguments. Capability input schemas reference this definition inside the existing execution contract; this is not a transport envelope. Tokens are possession credentials and must be redacted from audit evidence.",
+      "oneOf": [
+        {
+          "type": "object", "additionalProperties": false,
+          "required": ["action"],
+          "properties": { "action": { "const": "status" } }
+        },
+        {
+          "type": "object", "additionalProperties": false,
+          "required": ["action", "name", "owner"],
+          "properties": {
+            "action": { "const": "submit" },
+            "name": { "type": "string", "minLength": 1, "maxLength": 200, "pattern": "\\S" },
+            "owner": { "type": "string", "minLength": 1, "maxLength": 200, "pattern": "\\S" },
+            "leaseSeconds": { "type": "integer", "minimum": 10, "maximum": 300, "default": 120 }
+          }
+        },
+        {
+          "type": "object", "additionalProperties": false,
+          "required": ["action", "taskId", "token"],
+          "properties": {
+            "action": { "type": "string", "enum": ["poll", "release", "cancel"] },
+            "taskId": { "type": "string", "minLength": 1, "maxLength": 512, "pattern": "\\S" },
+            "token": { "type": "string", "minLength": 1, "maxLength": 512, "writeOnly": true, "x-sensitive": true }
+          }
+        },
+        {
+          "type": "object", "additionalProperties": false,
+          "required": ["action", "taskId", "token"],
+          "properties": {
+            "action": { "const": "renew" },
+            "taskId": { "type": "string", "minLength": 1, "maxLength": 512, "pattern": "\\S" },
+            "token": { "type": "string", "minLength": 1, "maxLength": 512, "writeOnly": true, "x-sensitive": true },
+            "leaseSeconds": { "type": "integer", "minimum": 10, "maximum": 300, "default": 120 }
+          }
+        }
+      ]
+    },
+    "taskSnapshot": {
+      "type": "object", "additionalProperties": false,
+      "description": "Public task evidence; intentionally excludes ownership credentials. Draining retains exclusivity until the admitted request is terminal.",
+      "required": ["taskId", "name", "owner", "status", "queuePosition", "leaseRemainingSeconds", "inFlightRequestId"],
+      "properties": {
+        "taskId": { "type": "string", "minLength": 1, "maxLength": 512 },
+        "name": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "owner": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "status": { "type": "string", "enum": ["queued", "active", "draining", "completed", "expired", "cancelled"] },
+        "queuePosition": { "type": "integer", "minimum": 0 },
+        "leaseRemainingSeconds": { "type": "number", "minimum": 0 },
+        "inFlightRequestId": { "type": ["string", "null"], "minLength": 1, "maxLength": 512 }
+      }
+    },
+    "taskSubmission": {
+      "type": "object", "additionalProperties": false,
+      "description": "Submission response returns a new possession token once. Persist it privately; public task snapshots never carry it.",
+      "required": ["task", "token"],
+      "properties": {
+        "task": { "$ref": "#/$defs/taskSnapshot" },
+        "token": { "type": "string", "minLength": 1, "maxLength": 512, "readOnly": true, "x-sensitive": true }
+      }
+    },
+    "taskStatus": {
+      "type": "object", "additionalProperties": false,
+      "description": "Public queue and bounded completed-task history for one exact instance.",
+      "required": ["tasks"],
+      "properties": {
+        "tasks": { "type": "array", "maxItems": 256, "items": { "$ref": "#/$defs/taskSnapshot" } }
+      }
+    },
     "application": {
       "type": "string",
       "enum": ["revit", "autocad"]

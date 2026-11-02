@@ -42,6 +42,7 @@ from aec_runtime import (
     TargetInputError,
     normalize_target_filters,
 )
+from aec_runtime.coordination import COORDINATION_PROVIDER_ID
 
 
 SERVER_VERSION = "1.1.0-rc.3"
@@ -391,6 +392,25 @@ def tool_result(value: dict[str, Any], is_error: bool = False) -> dict[str, Any]
     }
 
 
+def execution_result_is_error(name: str, arguments: Any, value: dict[str, Any]) -> bool:
+    # Coordination poll/control returns a task snapshot. Its terminal domain
+    # states describe the task, rather than failure of this successful command.
+    # Restrict the exception to the known neutral provider and exact controls;
+    # native step failures and arbitrary provider results retain their meaning.
+    if (
+        name == "aec_call_provider_write"
+        and isinstance(arguments, dict)
+        and arguments.get("provider") == COORDINATION_PROVIDER_ID
+        and arguments.get("toolName") in {"task_poll", "task_renew", "task_release", "task_cancel"}
+        and isinstance(value.get("taskId"), str)
+        and bool(value["taskId"].strip())
+        and value.get("status") in {"queued", "active", "draining", "completed", "expired", "cancelled"}
+        and "error" not in value
+    ):
+        return False
+    return value.get("status") in TERMINAL_STATUSES - {"succeeded"}
+
+
 def handle(message: Any) -> dict[str, Any] | None:
     if not isinstance(message, dict) or message.get("jsonrpc") != "2.0":
         raise ProtocolError(-32600, "Invalid JSON-RPC request")
@@ -446,7 +466,7 @@ def handle(message: Any) -> dict[str, Any] | None:
         ) as exc:
             result = tool_result({"error": str(exc)}, is_error=True)
         else:
-            result = tool_result(value, is_error=value.get("status") in TERMINAL_STATUSES - {"succeeded"})
+            result = tool_result(value, is_error=execution_result_is_error(name, params.get("arguments", {}), value))
         return {"jsonrpc": "2.0", "id": request_id, "result": result}
     raise ProtocolError(-32601, "Method not found")
 

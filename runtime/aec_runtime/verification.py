@@ -99,6 +99,10 @@ def normalize_execution_result(
         "rolledBack": rolled_back,
         "documentLock": "unknown" if request.get("intent") == "write" else "not_applicable",
     }
+    if str(request.get("capabilityId", "")).endswith((".task.coordination", ".family.session")):
+        # A queue/lease transition (including its dry-run) is not an Autodesk
+        # transaction and cannot claim a native commit or document lock.
+        transaction = {"status": "not_applicable", "rolledBack": False, "documentLock": "not_applicable"}
     verification_value = verification or verification_result(request.get("verification"))
     if (
         normalized_status == "succeeded"

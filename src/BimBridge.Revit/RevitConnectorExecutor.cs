@@ -17,6 +17,7 @@ internal sealed class RevitConnectorExecutor : IConnectorExecutor, IExternalEven
     private ConnectorInfo _cachedInfo;
     private ExternalEvent? _externalEvent;
     private ConnectorServer? _server;
+    private readonly RevitFamilySessionService _familySessions = new RevitFamilySessionService();
 
     public RevitConnectorExecutor(string versionNumber)
     {
@@ -80,13 +81,15 @@ internal sealed class RevitConnectorExecutor : IConnectorExecutor, IExternalEven
                 AuditLog.TryWrite(GetCachedInfo(), request.Snapshot());
                 continue;
             }
-            request.SetStatus(ConnectorRequestStatus.Running);
+            if (!request.TryStart()) continue;
             try
             {
                 if (request.Kind == ConnectorRequestKind.Selection)
                     ExecuteSelection(application, request);
                 else if (request.Operation == "view.capture")
                     ExecuteViewCapture(application, request);
+                else if (request.Operation == "family.session")
+                    ExecuteFamilySession(application, request);
                 else
                     ExecuteCode(application, request);
             }
@@ -104,6 +107,29 @@ internal sealed class RevitConnectorExecutor : IConnectorExecutor, IExternalEven
     }
 
     public string GetName() => "BIM Bridge Revit Connector";
+
+    private void ExecuteFamilySession(UIApplication application, ConnectorRequest request)
+    {
+        Action refresh = () => { RefreshCachedInfo(application); _server?.RefreshDescriptor(); };
+        try
+        {
+            var result = _familySessions.Execute(application, request, refresh);
+            request.Complete(new ConnectorCompletion { Status = ConnectorRequestStatus.Succeeded, Result = result,
+                Warnings = _familySessions.Warnings.ToList() });
+        }
+        catch (Exception exception)
+        {
+            refresh();
+            request.Complete(new ConnectorCompletion
+            {
+                Status = ConnectorRequestStatus.Failed, ErrorType = "family_session_failed",
+                Message = exception.Message, RolledBack = false,
+                Warnings = _familySessions.Warnings.ToList(),
+                Result = new { document = GetCachedInfo().Document, action = request.FamilySession?.Action,
+                    jobId = request.FamilySession?.JobId, atomic = false, lifecycle = _familySessions.FailureState() }
+            });
+        }
+    }
 
     public void RefreshCachedInfo(UIApplication application)
     {
@@ -286,7 +312,7 @@ internal sealed class RevitConnectorExecutor : IConnectorExecutor, IExternalEven
             Document = document,
             Capabilities = new List<string>
             {
-                "document.info", "selection.read", "view.capture", "code.read", "code.write", "transaction.rollback"
+                "document.info", "selection.read", "view.capture", "code.read", "code.write", "transaction.rollback", "task.coordination", "family.session"
             }
         };
 

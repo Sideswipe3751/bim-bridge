@@ -64,6 +64,27 @@ check or installation.
    and verification loop below.
 9. Read back the affected objects and report concrete identifiers and results.
 
+## Parallel preparation and exclusive host tasks
+
+For a multi-agent modeling request, agents may prepare independent specifications
+and code in parallel. Discover the installed task coordination tools through the
+normal provider search/schema workflow; do not assume an older Host supports them.
+Submit one named task against an explicit instance, retain its private task token,
+and poll until active before any Autodesk execution. Renew queued and active leases
+before expiry. Do not share tokens with unrelated agents or log them.
+
+Keep the task for the complete bounded modeling and verification sequence. Each
+step must name the current expected document; re-read after waiting. Code steps
+remain explicit critical dynamic-code operations even for query intent, and use
+the write provider tool with preview first. Coordination is not a reason to bypass
+structured-capability discovery, approval, transaction or target requirements.
+Pass task credentials to a discovered capture capability for visual verification.
+Release only after all admitted steps have terminal results. Cancel unused queued
+tasks. A timeout or draining state is not permission to transfer ownership, replay
+a write, or send it to another instance. After a connector restart, rediscover and
+inspect saved results before submitting a new task. See
+[multi-agent tasks](references/multi-agent-tasks.md) for the development workflow.
+
 ## Completion and verification loop
 
 For every creation or update whose result can be checked:
@@ -124,6 +145,8 @@ For every creation or update whose result can be checked:
 
 ## References
 
+- Read [multi-agent-tasks.md](references/multi-agent-tasks.md) for parallel
+  preparation, instance ownership, prepared family jobs and resident workers.
 - Read [setup.md](references/setup.md) for installation, repair, upgrade,
   restart, health-check, and uninstall requests.
 - Read [protocol.md](references/protocol.md) when diagnosing discovery, routing,

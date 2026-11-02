@@ -72,7 +72,9 @@ jobs:
         run: python -m unittest discover -s tests/mcp -p "test_*.py"
 
       - name: Run shared bridge tests
-        run: dotnet run --project tests/BimBridge.Host.Tests -c Release -f net10.0
+        run: |
+          dotnet build tests/BimBridge.Host.Tests -c Release -f net10.0 -m:1 -nodeReuse:false
+          dotnet run --project tests/BimBridge.Host.Tests -c Release -f net10.0 --no-build
 
       - name: Verify repository does not track Autodesk binaries
         shell: pwsh

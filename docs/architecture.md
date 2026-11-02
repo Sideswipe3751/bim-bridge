@@ -1,6 +1,6 @@
 # BIM Bridge architecture contract
 
-Last reviewed: 2026-08-16
+Last reviewed: 2026-11-02 (instance coordination and resident family jobs; Revit 2024 live scope)
 
 This document is the canonical architecture contract for BIM Bridge. Read it
 before changing source code, build logic, tests, Autodesk manifests, provider
@@ -297,10 +297,135 @@ provider or product host performs checks where the strongest guarantee exists.
 - Automatic retry is limited to proven non-mutating transport/availability
   failures and must preserve the same idempotency key.
 
+## Multi-client task coordination (development, Revit 2024 live scope)
+
+Parallel agent preparation stays in the calling agent adapters. The Runtime does
+not spawn agents, invoke models, or retain reasoning. The contract-v2
+`taskControl`, `taskSnapshot`, and `taskSubmission` definitions describe neutral
+instance-scoped ownership. The Runtime projects these through the discoverable
+built-in `bimbridge.coordination.v1` provider and the existing ten MCP tools;
+there is no additional MCP top-level tool or HTTP route.
+
+Independent stdio Runtime processes share one enforcement authority in the exact
+Autodesk connector process. `TaskCoordinator` is an Autodesk-free host lifecycle
+primitive, not an agent scheduler or provider-policy engine. The Runtime still
+owns capability, policy, risk, and routing decisions. The connector admits one
+task at a time in FIFO order, and one native request at a time under its token.
+An execution step must bind the current document identity, and the product host
+rechecks that identity on its UI thread. Cached document information remains
+available for discovery; legacy execution, selection and view capture cannot
+interleave with an owned task. Capture accepts ownership credentials through its
+discovered provider schema. Contract-v2 structured selection and verification
+carry the same credentials through the read-only `selection.read` operation on
+the existing execute route; tokenless legacy selection remains available only
+outside an owned task. Tokens are private capability handles, not claims of
+agent identity, approval grants, or a security boundary against a malicious
+same-user process. Logs redact both `token` and `taskToken`.
+
+Task control is a synchronous `task.control` operation on `/v1/execute`, with an
+exact target and read intent only for status. Leases last 10–300 seconds and use
+a monotonic clock. Waiting tasks must renew their waiting lease; granting starts
+a fresh active lease. Expiry or cancellation first cancels any admitted request
+that has not started. An already running native request enters `draining`: no new
+request is admitted and ownership cannot transfer until that request is terminal.
+A transport timeout never proves native execution
+stopped. Release with an in-flight request is refused. Restarting the connector
+invalidates all old ownership tokens; it never replays mutations. Clients must
+rediscover, inspect saved outputs and explicitly resubmit after a restart. Queue
+and terminal history are each bounded to 128 tasks and are not durable job storage.
+
+Application-global external providers cannot atomically participate in this
+instance gate. The Runtime refuses their execution when a coordination-capable
+connector for that application is discovered; it does not silently invoke them
+beside a lease. General provider reservation and durable distributed scheduling
+remain future work. AutoCAD and other Revit versions are not newly certified by
+this feature's Revit 2024 tests.
+
+`tests/revit/BimBridge.Revit.FurnitureBootstrap` is a development fixture, not a
+production family lifecycle capability. An explicitly configured cold child can
+create a disposable RFA, let the connector own all agent modeling transactions,
+then save and exit. A final cold project session loads verified RFAs and places
+native family instances. Its fixed checkout output root, run/session token,
+no-existing-document gate, no-overwrite checks, and temporary signed development
+manifest lifecycle isolate it from user projects. Native document creation,
+save/load and test assembly occur outside connector modeling transactions in
+this fixture. Installed Host binaries, public installation behavior, version
+matrix certification and release packaging are unchanged.
+
+### Resident family jobs (development, Revit 2024 live scope)
+
+Prepared family jobs are agent-neutral data, not model invocations. The Runtime
+owns a bounded local ready queue and deterministic workers over explicitly
+selected connector instances. A worker acquires the existing instance task lease
+and runs begin, modeling, structured verification, standard view preparation,
+capture and save/close before releasing ownership. Agent research and repair
+remain outside the worker and never hold a native execution lease while waiting
+for a model. There is no new agent SDK dependency or always-on installed daemon.
+
+Job packages are content-bound and persisted with atomic state replacement and
+a cross-process run lock. Equal job identity and content can be submitted again
+without replaying a completed delivery; changed content under an existing job
+identity is rejected. An interrupted in-flight stage or unknown mutation outcome
+requires reconciliation and quarantines the affected worker. It is never
+automatically replayed on another instance. A known terminal failure may release
+its worker only after bounded cleanup and exact parking-document readback.
+This local queue is not a distributed scheduler or a general reservation protocol
+for application-global third-party providers.
+Batch runs drain ready work. Finite producer sessions may wait for later ready
+submissions until an explicit seal, with a bounded idle deadline; they never
+install a permanent daemon. Execution delivery is `awaiting_review` and is not
+visual acceptance. A separate explicit review binds the package content hash,
+reviewer and actual image evidence before a job can become `succeeded`.
+CLI failure/unknown/incomplete execution outcomes return nonzero; a successful
+physical delivery still reports pending review when it has not been inspected.
+Submit/status/seal/review are local queue metadata operations, not Autodesk
+execution grants. Their redacted audit records identify the run, job and content
+hash without recording package code. A review is an explicit caller acceptance
+statement, not a new independent native verification. Each Host stage of run and
+reconciliation continues through the ordinary Runtime capability policy and
+instance task gate. State, package and per-stage evidence have explicit UTF-8
+size/count bounds; oversized or damaged evidence fails closed with a bounded
+digest and identity summary rather than being replayed or silently discarded.
+
+`revit.family.session` is an explicit structured lifecycle capability exposed
+through discoverable provider tools and the existing execute route. The shared
+Revit host owns document creation, activation, standard view preparation,
+save/close and abort. All actions require the instance task lease and exact
+current document identity. A session binds its created family and saved parking
+project to the same task owner; it cannot adopt another caller's document.
+File outputs are constrained to the configured family workspace, have bounded
+job/document names, reject redirecting links and traversal, and never overwrite
+an existing delivery. Document lifecycle actions run outside the ordinary
+generated-code modeling transaction; failures must not claim atomic rollback of
+file creation or document activation. View preparation owns its explicit native
+transaction. Ordinary modeling keeps the existing transaction-group guarantees.
+
+The development furniture bootstrap additionally supports a resident parking
+project. It starts only an explicitly requested disposable child; per-family
+lifecycle goes through the connector rather than an Idling finish-marker poll.
+The original marker mechanism remains solely for bounded final test shutdown
+after all family documents have returned to parking. Resident testing uses the
+same signed temporary manifests and restores installed manifests. It neither
+upgrades the installed Host nor changes installer behavior or matrix certification.
+Additive request timestamps distinguish received, native start and completion;
+save evidence distinguishes native save start/end from dispatch waiting.
+
+The connector and Runtime both honor the same `BIM_BRIDGE_INSTANCE_DIR` (legacy
+`AEC_CODEX_INSTANCE_DIR` fallback) so disposable children can use an isolated
+descriptor directory without altering installed discovery state. Request start
+is atomic with cancellation (`TryStart`); a cancelled terminal request cannot
+later enter a product executor after the gate has admitted another owner.
+
 ## Execution journal
 
 Runtime audit events are redacted before they enter an append-only, hash-chained
 JSONL execution journal under the current user's BIM Bridge state directory.
+Independent Runtime processes coordinate each day's append through a retained
+sidecar lock (`msvcrt` on Windows, `flock` on Unix). Thread and process lock
+acquisition are bounded; each writer re-reads the last complete hash under that
+lock before append and flush. A damaged or incomplete final record fails closed
+rather than silently starting a new chain. Existing historical records are never
+rewritten by this mechanism.
 The journal records requests, route and policy decisions, exact targets, state
 transitions, provider identity, transaction/rollback facts, verification, and
 normalized results. It does not record model reasoning or chain-of-thought.

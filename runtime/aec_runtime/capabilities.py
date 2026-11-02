@@ -204,16 +204,44 @@ def default_registry() -> CapabilityRegistry:
                     candidates=(connector,),
                 ),
                 CapabilityDefinition(
+                    f"{application}.task.coordination",
+                    application,
+                    ("read", "write"),
+                    "low",
+                    input_schema={"$ref": "https://bim-bridge.local/protocol/v2/bim-bridge-contract.schema.json#/$defs/taskControl"},
+                    output_schema={"oneOf": [
+                        {"$ref": "https://bim-bridge.local/protocol/v2/bim-bridge-contract.schema.json#/$defs/taskSnapshot"},
+                        {"$ref": "https://bim-bridge.local/protocol/v2/bim-bridge-contract.schema.json#/$defs/taskSubmission"},
+                        {"$ref": "https://bim-bridge.local/protocol/v2/bim-bridge-contract.schema.json#/$defs/taskStatus"},
+                        {"type": "object", "required": ["dryRun", "executed", "action"], "additionalProperties": False,
+                         "properties": {"dryRun": {"const": True}, "executed": {"const": False}, "action": {"type": "string"}}},
+                    ]},
+                    supports_dry_run=True,
+                    required_host_capabilities=("task.coordination",),
+                    candidates=(connector,),
+                ),
+                CapabilityDefinition(
                     f"{application}.selection.read",
                     application,
                     ("read",),
                     "low",
                     idempotency="guaranteed",
                     verification_guarantee="readback",
+                    input_schema={"type": "object", "properties": {
+                        "taskId": {"type": "string", "minLength": 1},
+                        "taskToken": {"type": "string", "minLength": 1}},
+                        "additionalProperties": False,
+                        "dependentRequired": {"taskId": ["taskToken"], "taskToken": ["taskId"]}},
                     candidates=(connector,),
                 ),
                 *(
                     [
+                        CapabilityDefinition(
+                            "revit.family.session", "revit", ("write",), "high",
+                            input_schema={"$ref": "https://bim-bridge.local/protocol/v2/bim-bridge-contract.schema.json#/$defs/familySession"},
+                            supports_dry_run=True, required_host_capabilities=("family.session", "task.coordination"),
+                            transaction_guarantee="none", rollback_guarantee="none", candidates=(connector,),
+                        ),
                         CapabilityDefinition(
                             "revit.view.capture",
                             "revit",
@@ -223,6 +251,8 @@ def default_registry() -> CapabilityRegistry:
                                 "type": "object",
                                 "properties": {
                                     "viewId": {"type": "integer", "minimum": 1},
+                                    "taskId": {"type": "string", "minLength": 1},
+                                    "taskToken": {"type": "string", "minLength": 1},
                                     "viewUniqueId": {"type": "string"},
                                     "viewName": {"type": "string"},
                                     "fileStem": {"type": "string", "maxLength": 80},

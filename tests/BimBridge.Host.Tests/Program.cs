@@ -8,6 +8,9 @@ using BimBridge.Host;
 
 var tests = new List<(string Name, Func<Task> Run)>
 {
+    ("family path containment and lifecycle timing", FamilySessionTests.Run),
+    ("exclusive task coordinator FIFO, expiry and races", TaskCoordinatorTests.Run),
+    ("task control HTTP enforcement", TaskCoordinatorTests.RunHttp),
     ("authenticated bridge and descriptor lifecycle", TestBridge),
     ("descriptor refresh tolerates a locked reader", TestDescriptorRefreshWhileLocked),
     ("request status is terminal once completed", TestTerminalStatus),

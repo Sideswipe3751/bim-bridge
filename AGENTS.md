@@ -24,6 +24,14 @@ Treat that document as the repository's architecture contract:
 In the final report for a code change, state whether the architecture contract
 was preserved or updated.
 
+## Multi-agent family work
+
+For multi-agent Revit family production, benchmarking, or optimization, read
+`docs/multi-agent-family-lessons.md` and `docs/resident-family-jobs.md` before
+planning the run. Treat recorded timings and process IDs as historical evidence,
+not current session state. Keep exact native readback and actual image review;
+do not relax acceptance criteria to improve a benchmark.
+
 ## Installation requests
 
 When a user asks an agent to install BIM Bridge from this GitHub repository,

@@ -218,12 +218,16 @@ def connector_request(
 def execute_connector_request(
     instance: dict[str, Any], arguments: dict[str, Any], mode: str
 ) -> dict[str, Any]:
+    if arguments.get("expectedDocumentId") is not None and (instance.get("document") or {}).get("id") != arguments["expectedDocumentId"]:
+        raise RuntimeError("Task step document identity changed before dispatch")
     timeout_seconds = arguments.get("timeoutSeconds", 30)
     payload = {
         "mode": mode,
         "description": arguments["description"].strip(),
         "code": arguments["code"].strip(),
         "timeoutSeconds": timeout_seconds,
+        "taskId": arguments.get("taskId"),
+        "taskToken": arguments.get("taskToken"),
         "target": {
             "application": instance["application"],
             "release": instance["applicationVersion"],
@@ -265,12 +269,18 @@ def execute_connector_operation(
     arguments: dict[str, Any],
     mode: str = "read",
     timeout_seconds: int = 30,
+    *,
+    task_id: str | None = None,
+    task_token: str | None = None,
 ) -> dict[str, Any]:
     payload = {
         "mode": mode,
         "operation": operation,
+        "taskId": task_id,
+        "taskToken": task_token,
         "description": "Capture a focused Revit view" if operation == "view.capture" else operation,
         "viewCapture": arguments if operation == "view.capture" else None,
+        "familySession": arguments if operation == "family.session" else None,
         "timeoutSeconds": timeout_seconds,
         "target": {
             "application": instance["application"],

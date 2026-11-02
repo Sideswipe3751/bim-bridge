@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import hashlib
+import errno
 import json
 import os
 import threading
+import time
 import uuid
+from contextlib import contextmanager
 from copy import deepcopy
 from datetime import datetime, timezone
 from typing import Any, Callable
@@ -15,6 +18,7 @@ from pathlib import Path
 
 SENSITIVE_KEYS = {
     "token",
+    "taskToken",
     "sessionToken",
     "authorization",
     "code",
@@ -51,45 +55,119 @@ def journal_directory(environment: dict[str, str] | None = None) -> Path:
 class ExecutionJournal:
     """Append-only, hash-chained JSONL execution evidence."""
 
-    def __init__(self, directory: Path | None = None):
+    def __init__(self, directory: Path | None = None, *, lock_timeout: float = 10.0):
+        if not 0 < lock_timeout < float("inf"):
+            raise ValueError("Journal lock timeout must be finite and positive")
         self.directory = journal_directory() if directory is None else Path(directory)
-        self._previous: dict[Path, str] = {}
+        self.lock_timeout = lock_timeout
         self._lock = threading.Lock()
 
     def write(self, record: dict[str, Any]) -> None:
         day = str(record.get("recordedAtUtc", "unknown"))[:10]
         path = self.directory / f"{day}.jsonl"
-        with self._lock:
+        with _journal_thread_lock(self._lock, self.lock_timeout):
             self.directory.mkdir(parents=True, exist_ok=True)
-            previous = self._previous.get(path)
-            if previous is None:
+            with _journal_file_lock(path.with_suffix(path.suffix + ".lock"), self.lock_timeout):
+                # Every Runtime process shares this authority. Never trust a
+                # per-object cached hash after another client may have appended.
                 previous = self._read_last_hash(path)
-            entry = deepcopy(record)
-            entry["previousHash"] = previous
-            encoded = json.dumps(entry, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
-            entry["recordHash"] = hashlib.sha256(encoded.encode("utf-8")).hexdigest()
-            with path.open("a", encoding="utf-8", newline="\n") as stream:
-                stream.write(json.dumps(entry, ensure_ascii=False, separators=(",", ":")) + "\n")
-            self._previous[path] = entry["recordHash"]
+                entry = deepcopy(record)
+                entry["previousHash"] = previous
+                encoded = json.dumps(entry, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+                entry["recordHash"] = hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+                data = (json.dumps(entry, ensure_ascii=False, separators=(",", ":")) + "\n").encode("utf-8")
+                with path.open("a+b") as stream:
+                    stream.seek(0, os.SEEK_END)
+                    if stream.tell():
+                        stream.seek(-1, os.SEEK_END)
+                        if stream.read(1) != b"\n":
+                            # A complete final JSON record may lack its newline.
+                            # Preserve it and add the separator before appending.
+                            data = b"\n" + data
+                    stream.write(data)
+                    stream.flush()
 
     @staticmethod
     def _read_last_hash(path: Path) -> str:
         if not path.is_file():
             return "0" * 64
-        try:
-            with path.open("rb") as stream:
-                stream.seek(0, os.SEEK_END)
-                size = stream.tell()
-                stream.seek(max(0, size - 65536), os.SEEK_SET)
-                lines = stream.read().decode("utf-8", errors="replace").splitlines()
-            if lines:
-                value = json.loads(lines[-1])
+        with path.open("rb") as stream:
+            stream.seek(0, os.SEEK_END)
+            position = stream.tell()
+            if position == 0:
+                return "0" * 64
+            tail = b""
+            while position:
+                count = min(position, 65536)
+                position -= count
+                stream.seek(position)
+                tail = stream.read(count) + tail
+                content = tail.rstrip(b"\r\n")
+                separator = content.rfind(b"\n")
+                if separator >= 0:
+                    tail = content[separator + 1:]
+                    break
+                if position == 0:
+                    tail = content
+            try:
+                value = json.loads(tail.decode("utf-8"))
                 record_hash = value.get("recordHash") if isinstance(value, dict) else None
-                if isinstance(record_hash, str) and len(record_hash) == 64:
+                if isinstance(record_hash, str) and len(record_hash) == 64 and all(c in "0123456789abcdef" for c in record_hash):
                     return record_hash
-        except (OSError, ValueError, json.JSONDecodeError):
-            pass
-        return "0" * 64
+            except (UnicodeDecodeError, ValueError):
+                pass
+            # Never silently fork the chain or append into a partial/corrupt line.
+            raise ValueError("Execution journal has an invalid final record; append refused")
+
+
+@contextmanager
+def _journal_thread_lock(lock: Any, timeout: float):
+    if not lock.acquire(timeout=timeout):
+        raise TimeoutError("Timed out acquiring execution journal thread lock")
+    try:
+        yield
+    finally:
+        lock.release()
+
+
+@contextmanager
+def _journal_file_lock(path: Path, timeout: float):
+    """Bounded same-user process lock; the stable sidecar is never removed."""
+    with path.open("a+b") as stream:
+        if os.fstat(stream.fileno()).st_size == 0:
+            stream.write(b"\0")
+            stream.flush()
+        deadline = time.monotonic() + timeout
+        acquired = False
+        try:
+            while True:
+                stream.seek(0)
+                try:
+                    if os.name == "nt":
+                        import msvcrt
+                        msvcrt.locking(stream.fileno(), msvcrt.LK_NBLCK, 1)
+                    else:
+                        import fcntl
+                        fcntl.flock(stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    acquired = True
+                    break
+                except OSError as error:
+                    if error.errno not in {errno.EACCES, errno.EAGAIN, errno.EDEADLK}:
+                        raise
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        raise TimeoutError("Timed out acquiring execution journal lock") from error
+                    time.sleep(min(0.01, remaining))
+            yield
+        finally:
+            if acquired:
+                stream.seek(0)
+                if os.name == "nt":
+                    import msvcrt
+                    msvcrt.locking(stream.fileno(), msvcrt.LK_UNLCK, 1)
+                else:
+                    import fcntl
+                    fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
 
 
 class AuditTrail:

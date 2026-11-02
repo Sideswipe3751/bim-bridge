@@ -12,6 +12,7 @@ public sealed class ConnectorServer : IDisposable
 {
     private readonly IConnectorExecutor _executor;
     private readonly ConnectorOptions _options;
+    private readonly TaskCoordinator _tasks = new TaskCoordinator();
     private readonly ConcurrentDictionary<string, ConnectorRequest> _requests =
         new ConcurrentDictionary<string, ConnectorRequest>(StringComparer.Ordinal);
     private readonly CancellationTokenSource _stop = new CancellationTokenSource();
@@ -206,6 +207,11 @@ public sealed class ConnectorServer : IDisposable
     {
         var payload = ReadJson<ExecutePayload>(context.Request);
         if (payload == null) throw new JsonCodecException("Request body is required");
+        if (payload.Operation == "task.control")
+        {
+            HandleTaskControl(context, payload);
+            return;
+        }
         var mode = (payload.Mode ?? "").Trim().ToLowerInvariant();
         if (mode != "read" && mode != "write")
         {
@@ -243,6 +249,32 @@ public sealed class ConnectorServer : IDisposable
             description = string.IsNullOrWhiteSpace(description) ? "Capture Revit view" : description;
             code = "";
         }
+        else if (operation == "selection.read")
+        {
+            if (mode != "read")
+            {
+                WriteJson(context, 400, new { error = "invalid_mode", message = "selection.read is read-only" });
+                return;
+            }
+            description = "Read current selection under task ownership";
+            code = "";
+        }
+        else if (operation == "family.session")
+        {
+            if (mode != "write" || payload.FamilySession == null || payload.Target?.Document == null ||
+                string.IsNullOrEmpty(payload.TaskId) || string.IsNullOrEmpty(payload.TaskToken))
+            {
+                WriteJson(context, 400, new { error = "invalid_family_session", message = "family.session requires write mode, options, an exact document target and task ownership" });
+                return;
+            }
+            if (!_executor.GetCachedInfo().Capabilities.Contains("family.session"))
+            {
+                WriteJson(context, 409, new { error = "unsupported_capability" });
+                return;
+            }
+            description = "Revit family session " + payload.FamilySession.Action;
+            code = "";
+        }
         else if (operation != "code")
         {
             WriteJson(context, 400, new { error = "unsupported_operation", message = "Unsupported connector operation" });
@@ -255,15 +287,17 @@ public sealed class ConnectorServer : IDisposable
             return;
         }
         var request = new ConnectorRequest(
-            ConnectorRequestKind.Execute,
+            operation == "selection.read" ? ConnectorRequestKind.Selection : ConnectorRequestKind.Execute,
             mode,
             description!.Trim(),
             code!,
             timeout,
             payload.Target,
             operation,
-            payload.ViewCapture);
-        if (!TryQueue(request, out var error))
+            payload.ViewCapture,
+            payload.FamilySession,
+            payload.TaskId);
+        if (!TryQueue(request, out var error, payload.TaskId, payload.TaskToken))
         {
             request.Dispose();
             WriteJson(context, 429, new { error = "queue_full", message = error });
@@ -297,7 +331,40 @@ public sealed class ConnectorServer : IDisposable
         WriteJson(context, 405, new { error = "method_not_allowed" });
     }
 
-    private bool TryQueue(ConnectorRequest request, out string? error)
+    private void HandleTaskControl(HttpListenerContext context, ExecutePayload payload)
+    {
+        var control = payload.TaskControl;
+        var targetError = ConnectorTargetGuard.Validate(payload.Target, _executor.GetCachedInfo());
+        if (payload.Target == null || targetError != null)
+        {
+            WriteJson(context, 409, new { error = targetError ?? "exact_target_required" });
+            return;
+        }
+        if (control == null || payload.Mode != (control.Action == "status" ? "read" : "write"))
+        {
+            WriteJson(context, 400, new { error = "invalid_task_control" });
+            return;
+        }
+        try
+        {
+            object result;
+            switch (control.Action)
+            {
+                case "status": result = new { tasks = _tasks.Status() }; break;
+                case "submit": result = _tasks.Submit(control.Name ?? "", control.Owner ?? "", control.LeaseSeconds); break;
+                case "poll": result = _tasks.Poll(control.TaskId ?? "", control.Token ?? ""); break;
+                case "renew": result = _tasks.Renew(control.TaskId ?? "", control.Token ?? "", control.LeaseSeconds); break;
+                case "release": result = _tasks.Release(control.TaskId ?? "", control.Token ?? ""); break;
+                case "cancel": result = _tasks.Cancel(control.TaskId ?? "", control.Token ?? ""); break;
+                default: throw new ArgumentException("invalid_task_action");
+            }
+            WriteJson(context, 200, result);
+        }
+        catch (ArgumentException ex) { WriteJson(context, 400, new { error = ex.Message }); }
+        catch (InvalidOperationException ex) { WriteJson(context, 409, new { error = ex.Message }); }
+    }
+
+    private bool TryQueue(ConnectorRequest request, out string? error, string? taskId = null, string? taskToken = null)
     {
         error = null;
         var active = 0;
@@ -308,8 +375,10 @@ public sealed class ConnectorServer : IDisposable
             error = "The connector request queue is full";
             return false;
         }
+        if (!_tasks.TryAdmit(request, taskId, taskToken, out error)) return false;
         if (!_requests.TryAdd(request.RequestId, request))
         {
+            request.TryCancel("Unable to allocate request ID");
             error = "Unable to allocate a request ID";
             return false;
         }
@@ -407,8 +476,12 @@ public sealed class ConnectorServer : IDisposable
         public string? Code { get; set; }
         public string? Operation { get; set; }
         public ConnectorViewCaptureOptions? ViewCapture { get; set; }
+        public ConnectorFamilySessionOptions? FamilySession { get; set; }
         public int? TimeoutSeconds { get; set; }
         public ConnectorExecutionTarget? Target { get; set; }
+        public TaskControlPayload? TaskControl { get; set; }
+        public string? TaskId { get; set; }
+        public string? TaskToken { get; set; }
     }
 
     private sealed class RequestBodyTooLargeException : Exception { }

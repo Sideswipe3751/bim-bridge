@@ -112,6 +112,41 @@ public sealed class ConnectorViewCaptureOptions
     public string FitDirection { get; set; } = "horizontal";
 }
 
+public sealed class ConnectorFamilySessionOptions
+{
+    public string Action { get; set; } = "";
+    public string JobId { get; set; } = "";
+    public string DocumentName { get; set; } = "";
+    public string? TemplatePath { get; set; }
+}
+
+public sealed class TaskControlPayload
+{
+    public string Action { get; set; } = "";
+    public string? TaskId { get; set; }
+    public string? Token { get; set; }
+    public string? Name { get; set; }
+    public string? Owner { get; set; }
+    public int LeaseSeconds { get; set; } = 120;
+}
+
+public sealed class TaskSnapshot
+{
+    public string TaskId { get; set; } = "";
+    public string Name { get; set; } = "";
+    public string Owner { get; set; } = "";
+    public string Status { get; set; } = "";
+    public int QueuePosition { get; set; }
+    public double LeaseRemainingSeconds { get; set; }
+    public string? InFlightRequestId { get; set; }
+}
+
+public sealed class TaskSubmission
+{
+    public TaskSnapshot Task { get; set; } = new TaskSnapshot();
+    public string Token { get; set; } = "";
+}
+
 public sealed class ConnectorRequestSnapshot
 {
     public string RequestId { get; set; } = "";
@@ -127,6 +162,12 @@ public sealed class ConnectorRequestSnapshot
     public long ElapsedMilliseconds { get; set; }
     public string CreatedAtUtc { get; set; } = "";
     public string DeadlineUtc { get; set; } = "";
+    public string? StartedAtUtc { get; set; }
+    public string? CompletedAtUtc { get; set; }
+    public string? SaveStartedAtUtc { get; set; }
+    public string? SaveCompletedAtUtc { get; set; }
+    public double QueueMilliseconds { get; set; }
+    public double NativeMilliseconds { get; set; }
 }
 
 public sealed class ConnectorRequest : IDisposable
@@ -137,6 +178,11 @@ public sealed class ConnectorRequest : IDisposable
     private DateTime? _startedAtUtc;
     private DateTime? _completedAtUtc;
     private ConnectorCompletion? _completion;
+    private DateTime? _saveStartedAtUtc;
+    private DateTime? _saveCompletedAtUtc;
+    private readonly System.Diagnostics.Stopwatch _lifetime = System.Diagnostics.Stopwatch.StartNew();
+    private double? _startedMilliseconds;
+    private double? _completedMilliseconds;
 
     public ConnectorRequest(
         ConnectorRequestKind kind,
@@ -146,7 +192,9 @@ public sealed class ConnectorRequest : IDisposable
         int timeoutSeconds,
         ConnectorExecutionTarget? expectedTarget = null,
         string operation = "code",
-        ConnectorViewCaptureOptions? viewCapture = null)
+        ConnectorViewCaptureOptions? viewCapture = null,
+        ConnectorFamilySessionOptions? familySession = null,
+        string? taskId = null)
     {
         RequestId = Guid.NewGuid().ToString("N");
         Kind = kind;
@@ -157,6 +205,8 @@ public sealed class ConnectorRequest : IDisposable
         ExpectedTarget = expectedTarget;
         Operation = string.IsNullOrWhiteSpace(operation) ? "code" : operation;
         ViewCapture = viewCapture;
+        FamilySession = familySession;
+        TaskId = taskId;
         CreatedAtUtc = DateTime.UtcNow;
         DeadlineUtc = CreatedAtUtc.AddSeconds(timeoutSeconds);
     }
@@ -170,12 +220,28 @@ public sealed class ConnectorRequest : IDisposable
     public ConnectorExecutionTarget? ExpectedTarget { get; }
     public string Operation { get; }
     public ConnectorViewCaptureOptions? ViewCapture { get; }
+    public ConnectorFamilySessionOptions? FamilySession { get; }
+    public string? TaskId { get; }
     public DateTime CreatedAtUtc { get; }
     public DateTime DeadlineUtc { get; }
 
     public bool IsTerminal
     {
         get { lock (_sync) return IsTerminalStatus(_status); }
+    }
+
+    // Atomically exclude cancellation before entering the native operation.
+    // A terminal request must never execute after the task gate has drained it.
+    public bool TryStart()
+    {
+        lock (_sync)
+        {
+            if (IsTerminalStatus(_status) || _status == ConnectorRequestStatus.Running) return false;
+            _status = ConnectorRequestStatus.Running;
+            _startedAtUtc = DateTime.UtcNow;
+            _startedMilliseconds = _lifetime.Elapsed.TotalMilliseconds;
+            return true;
+        }
     }
 
     public void SetStatus(ConnectorRequestStatus status, string? message = null)
@@ -185,7 +251,10 @@ public sealed class ConnectorRequest : IDisposable
             if (IsTerminalStatus(_status)) return;
             _status = status;
             if (status == ConnectorRequestStatus.Running && !_startedAtUtc.HasValue)
+            {
                 _startedAtUtc = DateTime.UtcNow;
+                _startedMilliseconds = _lifetime.Elapsed.TotalMilliseconds;
+            }
             if (message != null)
             {
                 _completion ??= new ConnectorCompletion();
@@ -203,6 +272,7 @@ public sealed class ConnectorRequest : IDisposable
             _completion = completion;
             _status = completion.Status;
             _completedAtUtc = DateTime.UtcNow;
+            _completedMilliseconds = _lifetime.Elapsed.TotalMilliseconds;
             _completed.Set();
         }
     }
@@ -220,12 +290,16 @@ public sealed class ConnectorRequest : IDisposable
             };
             _status = ConnectorRequestStatus.Cancelled;
             _completedAtUtc = DateTime.UtcNow;
+            _completedMilliseconds = _lifetime.Elapsed.TotalMilliseconds;
             _completed.Set();
             return true;
         }
     }
 
     public bool Wait(int millisecondsTimeout) => _completed.WaitOne(millisecondsTimeout);
+
+    public void MarkSaveStarted() { lock (_sync) _saveStartedAtUtc = DateTime.UtcNow; }
+    public void MarkSaveCompleted() { lock (_sync) _saveCompletedAtUtc = DateTime.UtcNow; }
 
     public ConnectorRequestSnapshot Snapshot()
     {
@@ -247,7 +321,14 @@ public sealed class ConnectorRequest : IDisposable
                 Warnings = new List<string>(_completion?.Warnings ?? new List<string>()),
                 ElapsedMilliseconds = (long)(completed - started).TotalMilliseconds,
                 CreatedAtUtc = CreatedAtUtc.ToString("o"),
-                DeadlineUtc = DeadlineUtc.ToString("o")
+                DeadlineUtc = DeadlineUtc.ToString("o"),
+                StartedAtUtc = _startedAtUtc?.ToString("o"),
+                CompletedAtUtc = _completedAtUtc?.ToString("o"),
+                SaveStartedAtUtc = _saveStartedAtUtc?.ToString("o"),
+                SaveCompletedAtUtc = _saveCompletedAtUtc?.ToString("o"),
+                QueueMilliseconds = _startedMilliseconds ?? (_completedMilliseconds ?? _lifetime.Elapsed.TotalMilliseconds),
+                NativeMilliseconds = _startedMilliseconds.HasValue
+                    ? Math.Max(0, (_completedMilliseconds ?? _lifetime.Elapsed.TotalMilliseconds) - _startedMilliseconds.Value) : 0
             };
         }
     }

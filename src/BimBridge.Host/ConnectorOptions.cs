@@ -16,6 +16,10 @@ public sealed class ConnectorOptions
 
     public static string DefaultInstanceDirectory()
     {
+        var configured = Environment.GetEnvironmentVariable("BIM_BRIDGE_INSTANCE_DIR");
+        if (string.IsNullOrWhiteSpace(configured))
+            configured = Environment.GetEnvironmentVariable("AEC_CODEX_INSTANCE_DIR");
+        if (!string.IsNullOrWhiteSpace(configured)) return Path.GetFullPath(configured);
         var appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
         return Path.Combine(appData, "BIM Bridge", "instances");
     }

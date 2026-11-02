@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8" standalone="no"?>
+<RevitAddIns>
+  <AddIn Type="Application">
+    <Name>BIM Bridge Disposable Furniture Test</Name>
+    <Assembly>{{ASSEMBLY_PATH}}</Assembly>
+    <AddInId>55A8D61B-07F6-493A-9840-A1C787BDA5CE</AddInId>
+    <FullClassName>BimBridge.Revit.FurnitureTest.FurnitureBootstrapApplication</FullClassName>
+    <VendorId>BMBR</VendorId>
+    <VendorDescription>Explicit child-process-only disposable furniture test</VendorDescription>
+  </AddIn>
+</RevitAddIns>

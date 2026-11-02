@@ -25,6 +25,7 @@ internal sealed class RuntimeCodeCompiler : IRevitCodeCompiler
                 CompilerOptions = "/optimize /langversion:5"
             };
             AddReference(parameters, typeof(object).Assembly);
+            AddReference(parameters, typeof(System.ComponentModel.Component).Assembly);
             AddReference(parameters, typeof(Enumerable).Assembly);
             AddReference(parameters, typeof(UIApplication).Assembly);
             AddReference(parameters, typeof(Document).Assembly);

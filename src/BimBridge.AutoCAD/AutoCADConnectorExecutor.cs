@@ -71,7 +71,7 @@ internal sealed class AutoCADConnectorExecutor : IConnectorExecutor
                 AuditLog.TryWrite(GetCachedInfo(), request.Snapshot());
                 continue;
             }
-            request.SetStatus(ConnectorRequestStatus.Running);
+            if (!request.TryStart()) continue;
             try
             {
                 if (request.Kind == ConnectorRequestKind.Selection)

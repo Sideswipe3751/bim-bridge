@@ -1,5 +1,14 @@
 Set-StrictMode -Version 2.0
 
+# The BIM Bridge add-in identity is one constant for every supported Revit
+# release. Revit keeps a distinct add-in registry per release year, and the live
+# acceptance entry point locates the production manifest of the year under test
+# by this ID, so it deliberately is not a per-year matrix value.
+$script:RevitAddInId = '66E6F0BE-A5B5-49D8-A543-EBF53885A58D'
+$script:RevitContextName = 'BIM.Bridge'
+
+function Get-RevitAddInId { return $script:RevitAddInId }
+
 function Convert-RevitRuntimeTfmToTargetFramework([string]$RuntimeTfm, [string]$RuntimeConfigPath) {
     switch -Regex ($RuntimeTfm) {
         '^net8(\.0)?$' { return 'net8.0-windows' }

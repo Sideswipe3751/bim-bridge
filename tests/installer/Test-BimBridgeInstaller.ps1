@@ -308,18 +308,17 @@ try {
         Assert ($guardValidateOnly -gt 0) 'The installer has no ValidateOnly action restriction.'
         Assert ($guardOverrides -gt 0) 'The installer has no override test-seam restriction.'
         foreach ($later in @(
-                @{ Pattern = 'Find-CodexCli$'; Name = 'CLI discovery' },
+                @{ Pattern = 'Find-CodexCli\r?$'; Name = 'CLI discovery' },
                 @{ Pattern = 'previousNewMcp = Get-CodexMcp'; Name = 'MCP read' },
                 @{ Pattern = 'Get-Content -LiteralPath \$statePath'; Name = 'install-state read' },
                 @{ Pattern = 'Get-Process -Name Revit,acad'; Name = 'running-Autodesk check' },
                 @{ Pattern = 'New-Item -ItemType Directory -Force -Path \$stateRoot'; Name = 'state-root write' },
-                @{ Pattern = 'Remove-CodexMcp \$codexCli \$newMcpName$'; Name = 'MCP mutation' },
+                @{ Pattern = 'Remove-CodexMcp \$codexCli \$newMcpName\r?$'; Name = 'MCP mutation' },
                 @{ Pattern = 'Stop-OwnedHostProcesses @\(\$stateRoot\)'; Name = 'process stop' })) {
-            $index = [regex]::Match($installerText, $later.Pattern, 'Multiline').Index
-            if ($index -ge 0) {
-                Assert ($guardValidateOnly -lt $index) "The ValidateOnly action restriction is not enforced before $($later.Name)."
-                Assert ($guardOverrides -lt $index) "The override restriction is not enforced before $($later.Name)."
-            }
+            $match = [regex]::Match($installerText, $later.Pattern, 'Multiline')
+            Assert $match.Success "The installer contract test could not locate $($later.Name)."
+            Assert ($guardValidateOnly -lt $match.Index) "The ValidateOnly action restriction is not enforced before $($later.Name)."
+            Assert ($guardOverrides -lt $match.Index) "The override restriction is not enforced before $($later.Name)."
         }
 
         # The preflight must not be reachable for Uninstall at all: the uninstall branch

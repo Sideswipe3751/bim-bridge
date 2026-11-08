@@ -9,7 +9,12 @@ param(
     [switch]$ValidateOnly,
     [switch]$MigrateLegacy,
     [hashtable]$ProductInstallPathOverrides,
-    [object[]]$RegistryInstallRecords
+    [object[]]$RegistryInstallRecords,
+    # Test seam: point the pre-existing install-state files at controlled paths so a
+    # regression can exercise state-dependent resolution without touching the real
+    # per-user installation. The installer itself never passes these.
+    [string]$StatePathOverride,
+    [string]$LegacyStatePathOverride
 )
 
 $ErrorActionPreference = 'Stop'
@@ -21,6 +26,32 @@ $SourceRoot = [IO.Path]::GetFullPath($SourceRoot)
 function Get-UserPath([Environment+SpecialFolder]$Folder) {
     [Environment]::GetFolderPath($Folder)
 }
+
+# ---------------------------------------------------------------------------
+# Read-only preflight contract, enforced before any CLI discovery, MCP read,
+# install-state read, process check, ShouldProcess prompt or write.
+#
+# `-ValidateOnly` means "inspect and report, change nothing". It previously sat after
+# the `-Action Uninstall` branch, so `-Action Uninstall -ValidateOnly` still ran the
+# uninstall path. The action is now restricted up front, and the test-seam overrides
+# are only accepted for that read-only preflight with a permitted action.
+# ---------------------------------------------------------------------------
+if ($ValidateOnly -and $Action -notin @('Install', 'Repair')) {
+    throw ("-ValidateOnly is a read-only preflight and is only supported for -Action Install or -Action Repair. Received -Action $Action with -ValidateOnly; uninstalling is never a read-only operation.")
+}
+$overrideSupplied = [bool]($StatePathOverride -or $LegacyStatePathOverride)
+if ($overrideSupplied -and (-not $ValidateOnly -or $Action -notin @('Install', 'Repair'))) {
+    throw ('-StatePathOverride and -LegacyStatePathOverride are read-only preflight test seams and are only supported with -ValidateOnly together with -Action Install or -Action Repair. ' +
+        "Received Action '$Action', ValidateOnly '$ValidateOnly'.")
+}
+# The containment roots the trusted resolver checks against. Without an override they
+# are the real per-user roots; with one they are derived from the override's own
+# parent, so a controlled test tree is judged against the controlled root rather than
+# against the real installation.
+$effectiveStateRoot = Join-Path (Get-UserPath LocalApplicationData) 'BIM Bridge'
+$effectiveLegacyStateRoot = Join-Path (Get-UserPath LocalApplicationData) 'AEC Codex'
+if ($StatePathOverride) { $effectiveStateRoot = Split-Path -Parent ([IO.Path]::GetFullPath($StatePathOverride)) }
+if ($LegacyStatePathOverride) { $effectiveLegacyStateRoot = Split-Path -Parent ([IO.Path]::GetFullPath($LegacyStatePathOverride)) }
 
 function Write-Utf8NoBom([string]$Path, [string]$Content) {
     $parent = Split-Path -Parent $Path
@@ -150,6 +181,204 @@ function Restore-CodexMcp([string]$Cli, [string]$Name, [object]$Definition) {
     }
 }
 
+function Test-LinkReparseTag([string]$TagText) {
+    # Only a real directory junction / mount point (0xA0000003) or symbolic link
+    # (0xA000000C) can redirect a path out of its root. A cloud-sync placeholder
+    # (OneDrive uses 0x9000e01a) carries the reparse *attribute* but is benign, so the
+    # attribute alone must never decide. A tag that cannot be read fails closed.
+    if ([string]::IsNullOrWhiteSpace($TagText)) { return $false }
+    $normalized = ([string]$TagText).Trim().ToLowerInvariant() -replace '^0x', ''
+    return ($normalized -eq 'a0000003' -or $normalized -eq 'a000000c')
+}
+
+function Test-LinkReparsePoint([string]$Path) {
+    # Returns $true only for a real link-style reparse point; $null when the entry is a
+    # reparse point whose tag could not be classified (the caller must fail closed).
+    $item = Get-Item -LiteralPath $Path -Force -ErrorAction SilentlyContinue
+    if (-not $item) { return $null }
+    if (-not ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) { return $false }
+    $output = @(& (Join-Path ([Environment]::GetFolderPath('Windows')) 'System32\fsutil.exe') reparsepoint query $Path 2>&1)
+    if ($LASTEXITCODE -ne 0) { return $null }
+    $tagLine = @($output | Where-Object { [string]$_ -match 'Reparse Tag Value\s*:\s*0x([0-9a-fA-F]{8})' })[0]
+    if (-not $tagLine) { return $null }
+    $null = [string]$tagLine -match 'Reparse Tag Value\s*:\s*0x([0-9a-fA-F]{8})'
+    return [bool](Test-LinkReparseTag ([string]$Matches[1]))
+}
+
+function Test-PathContainedInDirectory([string]$Candidate, [string]$Root) {
+    # Fail-closed containment for a path that a state file points at. A state file is
+    # data, not authority: a tampered or stale `python` value must not be able to name
+    # an executable anywhere on the machine.
+    #
+    # Rules, applied to the *root itself* and to every existing segment below it:
+    #   * both paths rooted and canonicalised, compared with a separator-terminated
+    #     prefix;
+    #   * raw `..` segments refused before canonicalisation;
+    #   * a real link reparse point (junction / mount point / symlink) anywhere on the
+    #     chain - the root included - refused, so a junction cannot redirect the lookup
+    #     outside the root;
+    #   * a reparse point whose tag cannot be read refused;
+    #   * a benign cloud placeholder tolerated, because it cannot redirect anything.
+    # Returns @{ Contained; Reason }.
+    if ([string]::IsNullOrWhiteSpace($Candidate) -or [string]::IsNullOrWhiteSpace($Root)) {
+        return @{ Contained = $false; Reason = 'the path or its root is empty' }
+    }
+    if (-not [IO.Path]::IsPathRooted($Candidate) -or -not [IO.Path]::IsPathRooted($Root)) {
+        return @{ Contained = $false; Reason = 'the path or its root is not absolute' }
+    }
+    if (@([string]$Candidate -split '[\\/]' | Where-Object { $_ -ceq '..' }).Count -gt 0) {
+        return @{ Contained = $false; Reason = 'the path contains a traversal segment' }
+    }
+    try {
+        $canonicalRoot = [IO.Path]::GetFullPath($Root).TrimEnd([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar)
+        $canonicalCandidate = [IO.Path]::GetFullPath($Candidate).TrimEnd([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar)
+    } catch {
+        return @{ Contained = $false; Reason = 'the path or its root could not be canonicalised' }
+    }
+    $prefix = $canonicalRoot + [IO.Path]::DirectorySeparatorChar
+    if ($canonicalCandidate -ne $canonicalRoot -and -not $canonicalCandidate.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)) {
+        return @{ Contained = $false; Reason = "is outside '$canonicalRoot'" }
+    }
+    # The root itself, then every existing segment below it.
+    $probe = $canonicalRoot
+    $relative = $canonicalCandidate.Substring($canonicalRoot.Length).TrimStart([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar)
+    $segments = @('') + @($relative -split '[\\/]' | Where-Object { $_ -ne '' })
+    foreach ($segment in $segments) {
+        if ($segment) { $probe = $probe + [IO.Path]::DirectorySeparatorChar + $segment }
+        if (-not (Test-Path -LiteralPath $probe)) { continue }
+        $linkState = Test-LinkReparsePoint $probe
+        if ($null -eq $linkState) {
+            return @{ Contained = $false; Reason = "'$probe' is a reparse point whose tag could not be classified" }
+        }
+        if ($linkState) {
+            return @{ Contained = $false; Reason = "'$probe' is a link reparse point (junction, mount point or symbolic link)" }
+        }
+    }
+    return @{ Contained = $true; Reason = $null }
+}
+
+function Resolve-PrivatePythonSource([string]$RepoRoot, [object]$CurrentState, [object]$LegacyState, [string]$StateRoot, [string]$LegacyStateRoot) {
+    # The single source of truth for "which private Python runtime gets shipped".
+    # Read-only: it probes paths and returns a decision, and never creates, writes,
+    # moves or deletes anything.
+    #
+    # Both the read-only preflight (`-ValidateOnly`) and the real Install/Repair path
+    # must use this function. They previously disagreed: the preflight accepted only
+    # `<SourceRoot>\runtime\python`, while the real install additionally fell back to
+    # the Python recorded in the current install-state and then to the legacy state.
+    # On a machine where the repository `runtime/python` tree is absent but a valid
+    # installed Host has its own Python, the preflight therefore failed with
+    # "The release package has no private Python runtime." even though the install
+    # would have succeeded. Sharing one resolver removes that class of divergence.
+    #
+    # Priority is exactly the install path's historical order:
+    #   1. repository        <RepoRoot>\runtime\python\python.exe
+    #   2. current state     <StateRoot>\host\<version>\python\python.exe
+    #   3. legacy state      <LegacyStateRoot>\host\<version>\runtime\python\python.exe
+    #
+    # Every candidate is a *trusted* location: a state file supplies only the version
+    # segment, and the resolved directory must be canonically contained in the host
+    # subtree of the state file that named it. A state file that points at an
+    # executable elsewhere on the machine is refused rather than copied into the Host.
+    $candidates = New-Object System.Collections.ArrayList
+    # The repository runtime is a trusted location only when it is actually contained in
+    # `<RepoRoot>\runtime\python`: the same chain and link classification applies, so a
+    # junction planted there cannot redirect the staged Host's interpreter.
+    $repoRuntimeDirectory = Join-Path $RepoRoot 'runtime\python'
+    $repoRuntimeProbe = Join-Path $repoRuntimeDirectory 'python.exe'
+    $repoRuntimeDecision = Test-PathContainedInDirectory -Candidate $repoRuntimeProbe -Root $repoRuntimeDirectory
+    [void]$candidates.Add([pscustomobject]@{
+            Kind        = 'repository-runtime'
+            Directory   = $repoRuntimeDirectory
+            Recorded    = $repoRuntimeProbe
+            TrustedBy   = $repoRuntimeDirectory
+            Uncontained = -not $repoRuntimeDecision.Contained
+            Reason      = $repoRuntimeDecision.Reason
+        })
+    if ($CurrentState -and $CurrentState.python) {
+        $recordedPython = [string]$CurrentState.python
+        # The recorded path supplies the version segment only; the directory that is
+        # actually used is rebuilt under the trusted host root.
+        $versionSegment = Split-Path -Leaf (Split-Path -Parent (Split-Path -Parent $recordedPython))
+        $trustedDirectory = if ($versionSegment) { Join-Path (Join-Path $StateRoot 'host') (Join-Path $versionSegment 'python') } else { $null }
+        $trustedBy = Join-Path $StateRoot 'host'
+        $currentDecision = Test-PathContainedInDirectory -Candidate $recordedPython -Root $trustedBy
+        # A state file only names a version; the version it *records* must agree with the
+        # version segment of the path it points at, or the record is not trustworthy.
+        $currentVersionAgrees = ($null -ne $CurrentState.PSObject.Properties['version']) -and
+            ([string]$CurrentState.version) -ceq ([string]$versionSegment)
+        $currentSchemaSupported = ([int]$CurrentState.schemaVersion -eq 4)
+        $currentReason = if (-not $currentSchemaSupported) { "records schemaVersion $($CurrentState.schemaVersion), which is not the supported schema 4" }
+        elseif (-not $currentVersionAgrees) { "records version '$($CurrentState.version)' but its python path names version '$versionSegment'" }
+        elseif (-not $currentDecision.Contained) { $currentDecision.Reason }
+        else { $null }
+        [void]$candidates.Add([pscustomobject]@{
+                Kind        = 'current-install-state'
+                Directory   = $trustedDirectory
+                Recorded    = $recordedPython
+                TrustedBy   = $trustedBy
+                Uncontained = ($null -ne $currentReason)
+                Reason      = $currentReason
+            })
+    }
+    if ($LegacyState -and $LegacyState.privatePython) {
+        $recordedLegacyPython = [string]$LegacyState.privatePython
+        $legacyVersionSegment = Split-Path -Leaf (Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $recordedLegacyPython)))
+        $trustedLegacyDirectory = if ($legacyVersionSegment) { Join-Path (Join-Path (Join-Path $LegacyStateRoot 'host') $legacyVersionSegment) 'runtime\python' } else { $null }
+        $trustedLegacyBy = Join-Path $LegacyStateRoot 'host'
+        $legacyDecision = Test-PathContainedInDirectory -Candidate $recordedLegacyPython -Root $trustedLegacyBy
+        # The legacy Install-AecCodex state used schema 3; schema 4 is accepted too so a
+        # republished legacy Host is not refused for the schema alone.
+        $legacySchemaSupported = ([int]$LegacyState.schemaVersion -eq 3) -or ([int]$LegacyState.schemaVersion -eq 4)
+        $legacyVersionAgrees = ($null -ne $LegacyState.PSObject.Properties['version']) -and
+            ([string]$LegacyState.version) -ceq ([string]$legacyVersionSegment)
+        $legacyReason = if (-not $legacySchemaSupported) { "records schemaVersion $($LegacyState.schemaVersion), which is neither the legacy schema 3 nor schema 4" }
+        elseif (-not $legacyVersionAgrees) { "records version '$($LegacyState.version)' but its privatePython path names version '$legacyVersionSegment'" }
+        elseif (-not $legacyDecision.Contained) { $legacyDecision.Reason }
+        else { $null }
+        [void]$candidates.Add([pscustomobject]@{
+                Kind        = 'legacy-install-state'
+                Directory   = $trustedLegacyDirectory
+                Recorded    = $recordedLegacyPython
+                TrustedBy   = $trustedLegacyBy
+                Uncontained = ($null -ne $legacyReason)
+                Reason      = $legacyReason
+            })
+    }
+    $refused = @($candidates | Where-Object { $_.Uncontained })
+    if ($refused.Count -gt 0) {
+        return [pscustomobject]@{
+            Available  = $false
+            Directory  = $null
+            Executable = $null
+            SourceKind = 'none'
+            Refused    = @($refused | ForEach-Object { "$($_.Kind): $($_.Reason)" })
+            Probed     = @($candidates | Where-Object { $_.Directory } | ForEach-Object { Join-Path ([string]$_.Directory) 'python.exe' })
+        }
+    }
+    foreach ($candidate in $candidates) {
+        if ([string]::IsNullOrWhiteSpace([string]$candidate.Directory)) { continue }
+        $executable = Join-Path ([string]$candidate.Directory) 'python.exe'
+        if (Test-Path -LiteralPath $executable -PathType Leaf) {
+            return [pscustomobject]@{
+                Available = $true
+                Directory = [string]$candidate.Directory
+                Executable = $executable
+                SourceKind = [string]$candidate.Kind
+            }
+        }
+    }
+    # Nothing is valid: report every location that was probed, in priority order, so
+    # the caller can explain precisely what is missing instead of only the first path.
+    return [pscustomobject]@{
+        Available = $false
+        Directory = $null
+        Executable = $null
+        SourceKind = 'none'
+        Probed = @($candidates | ForEach-Object { Join-Path ([string]$_.Directory) 'python.exe' })
+    }
+}
+
 function Stop-OwnedHostProcesses([string[]]$Roots) {
     $normalizedRoots = @($Roots | Where-Object { $_ } | ForEach-Object {
         [IO.Path]::GetFullPath($_).TrimEnd('\') + '\'
@@ -236,6 +465,7 @@ $roaming = Get-UserPath ApplicationData
 $local = Get-UserPath LocalApplicationData
 $stateRoot = Join-Path $local 'BIM Bridge'
 $statePath = Join-Path $stateRoot 'install-state.json'
+if ($StatePathOverride) { $statePath = [IO.Path]::GetFullPath($StatePathOverride) }
 $hostRoot = Join-Path $stateRoot ('host\' + $basePluginVersion)
 $connectorRoot = Join-Path $stateRoot 'connectors'
 $autoCADBundle = Join-Path $roaming 'Autodesk\ApplicationPlugins\BIM Bridge.bundle'
@@ -244,6 +474,7 @@ $legacyRoamingRoot = Join-Path $roaming 'AEC Codex'
 $legacyHostRoot = Join-Path $legacyStateRoot 'host'
 $legacyMaintenanceRoot = Join-Path $legacyStateRoot 'maintenance'
 $legacyInstallState = Join-Path $legacyStateRoot 'install-state.json'
+if ($LegacyStatePathOverride) { $legacyInstallState = [IO.Path]::GetFullPath($LegacyStatePathOverride) }
 $legacyProviderRoot = Join-Path $legacyStateRoot 'providers'
 $legacyRoamingProviders = Join-Path $legacyRoamingRoot 'providers'
 $legacyAutoCADBundle = Join-Path $roaming 'Autodesk\ApplicationPlugins\AEC Codex.bundle'
@@ -251,11 +482,35 @@ $legacyRevitDirectory = Join-Path $roaming 'Autodesk\Revit\Addins\2024\AEC Codex
 $legacyRevitManifest = Join-Path $roaming 'Autodesk\Revit\Addins\2024\AEC.Codex.addin'
 $legacyProviderDirectory = Join-Path $roaming 'Autodesk\Revit\Addins\2024\AEC Codex Providers'
 $legacyProviderManifest = Join-Path $roaming 'Autodesk\Revit\Addins\2024\AEC.Codex.Providers.addin'
-$codexCli = Find-CodexCli
+$codexCli = $null
 $newMcpName = [string]$releaseManifest.mcpRegistration
 $legacyMcpName = [string]$releaseManifest.legacyMigration.mcpRegistration
-$previousNewMcp = Get-CodexMcp $codexCli $newMcpName
-$previousLegacyMcp = Get-CodexMcp $codexCli $legacyMcpName
+# The pre-existing installation state is read here, before the read-only preflight can
+# return, because the preflight must resolve the same private Python runtime the real
+# install would. Reading it is pure I/O: nothing is created, written, moved or deleted,
+# and no process is stopped.
+$currentState = $null
+if (Test-Path -LiteralPath $statePath -PathType Leaf) {
+    try { $currentState = Get-Content -LiteralPath $statePath -Raw | ConvertFrom-Json } catch { }
+}
+$legacyState = $null
+if (Test-Path -LiteralPath $legacyInstallState -PathType Leaf) {
+    try { $legacyState = Get-Content -LiteralPath $legacyInstallState -Raw | ConvertFrom-Json } catch { }
+}
+
+# -ValidateOnly is strictly read-only, so it must not discover the Codex CLI (which
+# throws when the CLI is unavailable) nor read the MCP registration at all.
+if (-not $ValidateOnly) {
+    $codexCli = Find-CodexCli
+}
+$previousNewMcp = $null
+$previousLegacyMcp = $null
+if (-not $ValidateOnly) {
+    # Recorded only so a failed install can restore what this machine had; the
+    # preflight must not read or touch the Codex MCP registration at all.
+    $previousNewMcp = Get-CodexMcp $codexCli $newMcpName
+    $previousLegacyMcp = Get-CodexMcp $codexCli $legacyMcpName
+}
 
 $running = @(Get-Process -Name Revit,acad -ErrorAction SilentlyContinue)
 if ($running) {
@@ -348,8 +603,16 @@ if (-not $SkipBuild) {
 }
 
 if ($ValidateOnly) {
-    $pythonPath = Join-Path $SourceRoot 'runtime\python\python.exe'
-    if (-not (Test-Path -LiteralPath $pythonPath -PathType Leaf)) { throw 'The release package has no private Python runtime.' }
+    # Same trusted resolver the real install uses, so the preflight cannot disagree with it.
+    $resolvedPython = Resolve-PrivatePythonSource $SourceRoot $currentState $legacyState $effectiveStateRoot $effectiveLegacyStateRoot
+    if (-not $resolvedPython.Available) {
+        $probed = @($resolvedPython.Probed) -join '; '
+        $refusedDetail = ''
+        if ($resolvedPython.PSObject.Properties['Refused'] -and @($resolvedPython.Refused).Count -gt 0) {
+            $refusedDetail = ' Refused because a recorded path is not contained in its own state root: ' + (@($resolvedPython.Refused) -join '; ') + '.'
+        }
+        throw "The release package has no private Python runtime, and no recorded installation supplies one.$refusedDetail Probed, in priority order: $probed"
+    }
     foreach ($revit in $resolvedRevit) {
         $source = Join-Path $SourceRoot ("src\BimBridge.Revit\bin\$Configuration\$($revit.Include)\$($revit.TargetFramework)")
         foreach ($required in @("$($revit.AssemblyName).dll",[string]$revit.ManifestName)) {
@@ -367,8 +630,22 @@ if ($ValidateOnly) {
         revit=@($resolvedRevit | ForEach-Object { [string]$_.Include })
         autocad=@($resolvedAutoCAD | ForEach-Object { [string]$_.Include })
         skippedProducts=@($skippedProducts)
-        privatePython=$pythonPath
-    } | ConvertTo-Json -Depth 5
+        # The pre-existing state this preflight is about to be judged against. Without
+        # it a reader cannot tell whether the settings came from the repository or from
+        # an already-installed Host.
+        existingInstallState=[ordered]@{
+            currentPresent = ($null -ne $currentState)
+            currentVersion = if ($currentState) { [string]$currentState.version } else { $null }
+            legacyPresent  = ($null -ne $legacyState)
+            legacyVersion  = if ($legacyState) { [string]$legacyState.version } else { $null }
+        }
+        privatePythonSource=[string]$resolvedPython.Directory
+        privatePythonExecutable=[string]$resolvedPython.Executable
+        sourceKind=[string]$resolvedPython.SourceKind
+        # Retained under its original name so existing consumers keep working.
+        privatePython=[string]$resolvedPython.Executable
+        readOnly=$true
+    } | ConvertTo-Json -Depth 6
     return
 }
 
@@ -377,14 +654,8 @@ $stagingRoot = Join-Path $stateRoot ('staging-' + [Guid]::NewGuid().ToString('N'
 $rollbackRoot = Join-Path $stateRoot ('rollback-' + [Guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Force -Path $stagingRoot,$rollbackRoot | Out-Null
 $backupRecords = New-Object System.Collections.ArrayList
-$currentState = $null
-if (Test-Path -LiteralPath $statePath -PathType Leaf) {
-    try { $currentState = Get-Content -LiteralPath $statePath -Raw | ConvertFrom-Json } catch { }
-}
-$legacyState = $null
-if (Test-Path -LiteralPath $legacyInstallState -PathType Leaf) {
-    try { $legacyState = Get-Content -LiteralPath $legacyInstallState -Raw | ConvertFrom-Json } catch { }
-}
+# $currentState / $legacyState were already read above, before the read-only
+# preflight could return, so the preflight and this install path share one resolution.
 
 try {
     $stagedHost = Join-Path $stagingRoot 'host'
@@ -393,16 +664,17 @@ try {
     Copy-Directory (Join-Path $SourceRoot 'runtime\aec_runtime') (Join-Path $stagedHost 'mcp-server\runtime\aec_runtime')
     Copy-Item -LiteralPath (Join-Path $SourceRoot 'installer\Start-BimBridgeMcp.ps1') -Destination (Join-Path $stagedHost 'Start-BimBridgeMcp.ps1')
 
-    $pythonSource = Join-Path $SourceRoot 'runtime\python'
-    if (-not (Test-Path -LiteralPath (Join-Path $pythonSource 'python.exe') -PathType Leaf) -and $currentState -and $currentState.python) {
-        $pythonSource = Split-Path -Parent ([string]$currentState.python)
+    $pythonSource = $null
+    $resolvedPython = Resolve-PrivatePythonSource $SourceRoot $currentState $legacyState $effectiveStateRoot $effectiveLegacyStateRoot
+    if (-not $resolvedPython.Available) {
+        $probed = @($resolvedPython.Probed) -join '; '
+        $refusedDetail = ''
+        if ($resolvedPython.PSObject.Properties['Refused'] -and @($resolvedPython.Refused).Count -gt 0) {
+            $refusedDetail = ' Refused because a recorded path is not contained in its own state root: ' + (@($resolvedPython.Refused) -join '; ') + '.'
+        }
+        throw "A packaged private Python runtime is required, and no recorded installation supplies one. Repair the legacy host or build a complete BIM Bridge release first.$refusedDetail Probed, in priority order: $probed"
     }
-    if (-not (Test-Path -LiteralPath (Join-Path $pythonSource 'python.exe') -PathType Leaf) -and $legacyState -and $legacyState.privatePython) {
-        $pythonSource = Split-Path -Parent ([string]$legacyState.privatePython)
-    }
-    if (-not (Test-Path -LiteralPath (Join-Path $pythonSource 'python.exe') -PathType Leaf)) {
-        throw 'A packaged private Python runtime is required. Repair the legacy host or build a complete BIM Bridge release first.'
-    }
+    $pythonSource = [string]$resolvedPython.Directory
     Copy-Directory $pythonSource (Join-Path $stagedHost 'python')
 
     $stagedConnectors = Join-Path $stagingRoot 'connectors'

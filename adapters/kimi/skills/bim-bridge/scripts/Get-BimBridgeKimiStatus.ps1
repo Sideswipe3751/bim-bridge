@@ -28,11 +28,31 @@ function Find-KimiCode {
     $command = Get-Command kimi -ErrorAction SilentlyContinue | Select-Object -First 1
     if (-not $command) { return $null }
     $commandPath = if ($command.Path) { [string]$command.Path } else { [string]$command.Source }
+    # Windows PowerShell 5.1 resolves an npm-installed `kimi` to the kimi.ps1
+    # shim (ExternalScript ranks ahead of Application), and the shim's nested
+    # native call does not surface --version output to the caller. Probe the
+    # sibling .cmd shim first when the resolved command is a .ps1 script.
+    $probePath = $commandPath
+    if ([IO.Path]::GetExtension($commandPath) -ieq '.ps1') {
+        $cmdShim = [IO.Path]::ChangeExtension($commandPath, '.cmd')
+        if (Test-Path -LiteralPath $cmdShim -PathType Leaf) { $probePath = $cmdShim }
+    }
     $version = $null
     try {
-        $version = [string]@(& $commandPath --version 2>$null)[0]
+        $version = [string]@(& $probePath --version 2>$null)[0]
     } catch {
         $version = $null
+    }
+    if ([string]::IsNullOrWhiteSpace($version)) {
+        # Last-resort read-only fallback for npm layouts: the bundled package.json.
+        $pkgJson = Join-Path (Split-Path -Parent $commandPath) 'node_modules\@moonshot-ai\kimi-code\package.json'
+        if (Test-Path -LiteralPath $pkgJson -PathType Leaf) {
+            try {
+                $version = [string](Get-Content -LiteralPath $pkgJson -Raw | ConvertFrom-Json).version
+            } catch {
+                $version = $null
+            }
+        }
     }
     return [ordered]@{ command = $commandPath; version = $version }
 }

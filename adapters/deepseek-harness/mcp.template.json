@@ -1,0 +1,18 @@
+{
+  "_comment": "DeepSeek Harness does not auto-load an MCP server file. Replace <ABSOLUTE_PATH_TO_SKILL> with the absolute path of adapters/deepseek-harness/skills/bim-bridge/scripts (the launcher's own directory), then translate this server into an '@deepseek-ai/dsh-mcp-client' row in a DSH profile's Cordis configuration. Get-BimBridgeDshMcpConfig.ps1 -Style cordis-patch emits that row directly, with cwd equal to that same directory. cwd must exist wherever the bundle is copied: DeepSeek Harness hands it straight to the stdio spawn and a missing directory fails the spawn.",
+  "mcpServers": {
+    "bim-bridge": {
+      "transport": "stdio",
+      "command": "powershell.exe",
+      "args": [
+        "-NoLogo",
+        "-NoProfile",
+        "-NonInteractive",
+        "-File",
+        "<ABSOLUTE_PATH_TO_SKILL>\\Start-BimBridgeDshMcp.ps1"
+      ],
+      "cwd": "<ABSOLUTE_PATH_TO_SKILL>",
+      "toolCallTimeoutMs": 60000
+    }
+  }
+}

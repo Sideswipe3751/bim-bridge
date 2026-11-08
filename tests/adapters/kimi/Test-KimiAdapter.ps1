@@ -160,7 +160,11 @@ try {
     } finally {
         $ErrorActionPreference = $previousErrorActionPreference
     }
-    $outsideStderr = Get-Content -LiteralPath $outsideStderrPath -Raw
+    # Windows PowerShell 5.1 renders a redirected child stderr stream through the
+    # console host, which wraps the message at the current buffer width and can
+    # split the asserted phrase across lines. Fold all whitespace runs to single
+    # spaces so the assertion tests the message text, not the host's wrapping.
+    $outsideStderr = (Get-Content -LiteralPath $outsideStderrPath -Raw) -replace '\s+', ' '
     if ($outsideExitCode -eq 0 -or $outsideStderr -notmatch 'outside the BIM Bridge Host root') {
         throw 'Kimi launcher did not reject a recorded launcher outside the neutral Host root.'
     }

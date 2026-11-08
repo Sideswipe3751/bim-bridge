@@ -1,6 +1,9 @@
 # BIM Bridge architecture contract
 
-Last reviewed: 2026-11-02 (instance coordination and resident family jobs; Revit 2024 live scope)
+Last reviewed: 2026-11-02 (resident family jobs and bounded ready-queue scheduling;
+instance task coordination, concurrent audit journals,
+and disposable Revit 2024 furniture acceptance; prior adapter, staging and version
+authority contracts retained)
 
 This document is the canonical architecture contract for BIM Bridge. Read it
 before changing source code, build logic, tests, Autodesk manifests, provider
@@ -36,16 +39,18 @@ before large directory moves.
 
 **Current implementation milestone:** package and locally validate the
 agent-independent runtime behind the Codex adapter, plus experimental thin
-Tencent WorkBuddy and Kimi Code adapters that mount the same installed stdio MCP
-projection. Both adapters perform read-only Host preflight and delegate through
-a verified wrapper to the neutral Host launcher. WorkBuddy provides a repository
-Marketplace Plugin that bundles its Skill and relocatable MCP declaration; Kimi
-provides a native Kimi plugin manifest. Neither adapter installs or repairs the
-Host. DeepSeek Harness and other agent packages remain deferred. Future agent
-packages may reuse the same read-only status, explicit consent, host bootstrap,
-and restart lifecycle, but must not fork the runtime or host binaries. This
-sequencing constraint does not make Codex, WorkBuddy, or Kimi the owner of
-runtime behavior.
+Tencent WorkBuddy, Kimi Code, and DeepSeek Harness adapters that mount the same
+installed stdio MCP projection. All three adapters perform read-only Host
+preflight and delegate through a verified wrapper to the neutral Host launcher.
+WorkBuddy provides a repository Marketplace Plugin that bundles its Skill and
+relocatable MCP declaration; Kimi provides a native Kimi plugin manifest; DeepSeek
+Harness provides a stdio MCP configuration template and a Skill, and it resolves
+both `dsh` and its bundled Node interpreter without depending on `PATH`. None of
+them installs or repairs the Host, and none is independently certified. Future
+agent packages may reuse the same read-only status, explicit consent, host
+bootstrap, and restart lifecycle, but must not fork the runtime or host binaries.
+This sequencing constraint does not make Codex, WorkBuddy, Kimi, or DeepSeek
+Harness the owner of runtime behavior.
 
 As of this review, unattended live acceptance has passed on the certification
 machine for Revit 2024.1 on .NET Framework 4.8, Revit 2025.4 on .NET 8, Revit
@@ -496,6 +501,65 @@ Official DeepSeek references:
 - [DeepSeek Harness architecture and capability seams](https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/architecture.md)
 - [DeepSeek Harness extension plugin shapes](https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/cookbook/extension-cookbook.md)
 
+### DeepSeek Harness adapter contract
+
+The working tree contains an experimental DeepSeek Harness adapter
+(`adapters/deepseek-harness/**`, documented in `docs/deepseek-harness-adapter.md`).
+It is a thin stdio-MCP client of the installed Host: it mounts the existing
+`bim-bridge` MCP server, bridges tools only, and adds no Runtime, Host, provider
+policy, or Autodesk logic. It does not install, repair, upgrade, or uninstall the
+Host and never writes agent configuration.
+
+**Shim and bundled-Node discovery.** The adapter must work on a machine where
+DeepSeek Harness was never added to `PATH`, without adding a `PATH` entry and
+without a machine-wide Node installation. Both the read-only status probe and the
+launcher wrapper therefore resolve two executables themselves, in a fixed order,
+and report the source of the candidate they used:
+
+| `dsh` candidate order | reported source | `node.exe` candidate order | reported source |
+| --- | --- | --- | --- |
+| `BIM_BRIDGE_DSH_COMMAND` | `BIM_BRIDGE_DSH_COMMAND` | `BIM_BRIDGE_DSH_NODE` | `BIM_BRIDGE_DSH_NODE` |
+| `dsh` on the process `PATH` | `PATH` | `node.exe` on the process `PATH` | `PATH` |
+| `%LOCALAPPDATA%\Programs\DeepSeekHarness\bin\dsh.cmd` | `dsh_install` | `%LOCALAPPDATA%\Programs\DeepSeekHarness\node-*-win-*\node.exe` (newest directory name first) | `bundled_node` |
+| `<dshHome>\node_modules\.bin\dsh.cmd` | `dsh_home` | — | — |
+
+The invariants that make this contract, not a heuristic:
+
+- **Fixed documented candidates only.** No directory tree is searched for DeepSeek
+  Harness, and no private agent configuration file is parsed. The script
+  interface being discovered is the same `dsh` entry point an operator invokes.
+- **An override is terminal, not a hint.** When `BIM_BRIDGE_DSH_COMMAND` or
+  `BIM_BRIDGE_DSH_NODE` is set, that value is the answer; a missing override is
+  reported as missing and is never silently replaced by a discovered
+  installation. Otherwise a status check could report success for a different
+  installation than the one it was pointed at.
+- **Existence is required.** A candidate is accepted only when it exists on disk,
+  so a stale directory never becomes a phantom `installed: true`. With no
+  candidate the status is `deepseek_harness_not_found` and the action is
+  `install_deepseek_harness`.
+- **Discovery never writes and never edits `PATH`** — neither the process `PATH`
+  nor the persisted user `PATH`. The launcher wrapper prepends the resolved Node
+  directory to the **child's** environment only, so the delegated Host process can
+  rely on `node` without a global installation. A resolution failure is not fatal
+  there: the wrapper's exit semantics depend only on its Host-containment checks.
+- **Dependency-free execution in the spawn environment.** DeepSeek Harness spawns
+  MCP stdio servers with a scrubbed environment whose `PSModulePath` can leave
+  `Microsoft.PowerShell.Utility` partially loaded, so `Get-FileHash` may be absent
+  while `ConvertFrom-Json` resolves. Hashing and link inspection therefore go
+  through .NET and Win32 rather than through cmdlets, and both adapter scripts are
+  tested against that rule.
+
+**Wrapper integrity contract.** The launcher refuses to start unless, in order:
+`install-state.json` exists with `schemaVersion` 4; the recorded launcher is
+lexically inside `<StateRoot>\host\`; the launcher exists and resolves to its
+final on-disk path; the launcher itself is not a reparse point; the resolved path
+remains inside the Host root; the launcher has a single hard link; and the
+recorded SHA-256 is 64 hexadecimal characters and matches the file. Failures are
+diagnosed on stderr only and exit `1`; stdout carries nothing but MCP protocol.
+On success the wrapper sets `BIM_BRIDGE_AGENT_ADAPTER=deepseek-harness` for the
+delegated process and propagates its exit code. A local install-hash check is not
+equivalent to release signature verification.
+
 ## Target repository ownership
 
 The end state is organized by responsibility, but extraction precedes movement:
@@ -604,6 +668,44 @@ Official references:
 
 - [AutoCAD managed .NET compatibility](https://help.autodesk.com/cloudhelp/2027/ENU/AutoCAD-Customization/files/GUID-A6C680F2-DE2E-418A-A182-E4884073338A.htm)
 - [Autodesk 2025/2026 product-line .NET 10 servicing update](https://blog.autodesk.io/autodesk-desktop-products-2025-2026-net-10-updates/)
+
+## Version authority
+
+Two version numbers exist in this repository. They mean different things, they
+are declared in different places, and only one of them may be derived from the
+other. Neither may be guessed.
+
+| Value | Authoritative source | Current value | Meaning |
+| --- | --- | --- | --- |
+| Package version (SemVer) | `Directory.Build.props` `<Version>` | `2.0.0-alpha.4` | The release/package identity the installer, release manifest, release notes, and Host state directory publish. A prerelease label belongs here. |
+| Assembly identity | `Directory.Build.props` `<AssemblyVersion>` / `<FileVersion>` | `2.0.0.0` | The CLR assembly identity of `BimBridge.*` binaries. |
+| Autodesk bundle version | `eng/Get-BimBridgeVersion.ps1` mapping, asserted against every declared site | `2.0.0` | The stable numeric value rendered into `ApplicationPackage/@AppVersion` and `ComponentEntry/@Version`. |
+
+`eng/Get-BimBridgeVersion.ps1` is the single source of the mapping. It reads
+`Directory.Build.props` and applies one explicit rule: **strip the SemVer
+prerelease and build-metadata segments, keep the dotted numeric core**. So
+`2.0.0-alpha.4` maps to `2.0.0`, `1.1.0-rc.3` to `1.1.0`, and an unparsable
+version throws instead of mapping to something plausible.
+
+Why the Autodesk value is not simply the package version: for an AutoCAD bundle
+manifest, `ComponentEntry/@Version` is the **minimum required AutoCAD product
+version**, so it is not package identity and a prerelease string is not "the
+same version with a suffix". Writing `2.0.0-alpha.4` there could change Autodesk
+load gating, which is why the mapping is a deliberate, documented transformation
+rather than a copy. `ApplicationPackage/@AppVersion` and `ComponentEntry/@Version`
+receive the same derived value from one substitution point
+(`src/BimBridge.AutoCAD/PackageContents.template.xml` `{{APP_VERSION}}`).
+
+`tests/architecture/Test-BimBridgeVersionAuthority.ps1` holds every declared
+Autodesk AppVersion to the mapped value: the
+`eng/AutodeskVersionMatrix.ps1` parameter default, the
+`eng/Build-AutoCADAdapters.ps1` call site, the positional
+`installer/Install-BimBridge.ps1` call site, the legacy
+`src/BimBridge.AutoCAD2024/PackageContents.xml`, and the staged bundle under
+`artifacts/staging/**`. The same test asserts that this document names both
+values, so the documented contract and the code cannot drift apart silently.
+Replacing those three literals with calls to the helper is a follow-up for the
+files' owners; until then a drift fails that test rather than shipping.
 
 ## Single version matrix
 
@@ -946,11 +1048,16 @@ provider, routing, and policy behavior is delegated to `BimBridgeRuntime`.
 
 ### Phase 6: add DeepSeek Harness compatibility
 
-This phase is explicitly deferred and is outside the current Codex-only
-implementation milestone. It begins only after the user changes that sequencing
-decision and the version 2 contract plus Codex adapter are certified.
+**Status: MCP-mount slice implemented as an experimental adapter; native-plugin
+slice still deferred.** The thin stdio-MCP adapter described under "DeepSeek
+Harness adapter contract" mounts the certified `bim-bridge` MCP server, and its
+read-only status, wrapper containment, and PATH-less discovery are covered by its
+own test suite. No `ctx.aec` service exists, Contract v2 is untouched, the
+adapter is not independently certified, and this does not start the
+Codex-independent sequencing decision that the rest of the phase depends on.
 
-- first mount the certified BIM Bridge MCP adapter as a Harness MCP plugin;
+- first mount the certified BIM Bridge MCP adapter as a Harness MCP plugin
+  (implemented for the experimental adapter);
 - optionally add a small `ctx.aec` service wrapper only after the version 2
   contract is stable;
 - pin the tested Harness version because its developer preview permits breaking
@@ -1075,6 +1182,257 @@ After a successful install or repair, the installer may remove only stale
 `staging-*` and `rollback-*` directories that resolve directly beneath the BIM
 Bridge state root. It must never broaden that cleanup to the state root itself
 or to unknown legacy directories.
+
+## Staged packages, builder output, and gaps
+
+The matrix builders are also the offline staging path. `-BundleDirectory` writes
+a repository-local development package and nothing else: no Autodesk location,
+no user state, and no registry entry is written by a builder. The staged
+layouts, and which document is authoritative for each, are contract:
+
+| Artifact | Written by | `relativePath` / path base | Authority |
+| --- | --- | --- | --- |
+| `autocad/BIM Bridge.bundle/PackageContents.xml` | `eng/Build-AutoCADAdapters.ps1` via `New-AutoCADPackageContents` | `ModuleName="./Contents/Windows/<year>/<assembly>.dll"`, relative to the bundle root with forward slashes | the matrix renderer and the bundle manifest schema |
+| `revit/bundle-manifest.json` (the Revit staging index) | `eng/Build-RevitAdapters.ps1` | relative to the bundle root with forward slashes; each entry carries the same value in `path` and `relativePath` | the builder implementation and `eng/RevitVersionMatrix.ps1` |
+| `artifacts/integration-regression/staging-manifest.json` (the integration manifest) | `artifacts/integration-regression/New-IntegrationManifest.ps1` | **relative to the staging root**, i.e. one directory above the Revit bundle root, and it additionally records a `targetPath` for each future installation location | the integration generator |
+
+Two distinct manifest schemas exist, so the same field name means two different
+bases. This is a deliberate, documented fact rather than an inconsistency to be
+"fixed" in code: the Revit builder's index is a machine-mergeable fragment whose
+paths must be resolvable from the package the integrator assembles, while the
+integration manifest describes a package that also contains the AutoCAD bundle.
+Neither schema may be described using the other's base, and no consumer may
+assume `relativePath` means "relative to whatever directory I happen to hold".
+
+**Builder output contract.** Both builders emit JSON on standard output, and the
+shape is decided by one rule that is identical for both of them:
+
+| Invocation | Standard output |
+| --- | --- |
+| No staging parameter and no envelope parameter | A **top-level JSON array** of per-release result rows — the legacy contract that existing callers iterate after `ConvertFrom-Json`. |
+| Any explicit staging parameter (`-BundleDirectory`, or the Revit `-RenderManifestDirectory`) | A **JSON object** (the envelope). AutoCAD returns `results` and `bundle`; Revit returns `results`, `renderedManifests`, `gaps`, and `bundle`. |
+
+The field set inside that envelope is the intentional, documented asymmetry:
+Revit's `bundle` carries `releases`, `fileCount`, and `unavailableReleases`, which
+AutoCAD's does not, because AutoCAD neither renders add-in manifests nor reports
+unavailable releases. **Explicit staging intent must never silently discard the
+bundle summary**: the run that created a staged bundle is the only run whose
+output describes it, so a builder that wrote a bundle and then printed the array
+would lose that description with no error and no other artifact to recover it
+from.
+
+`-Envelope` is therefore an accepted, redundant spelling of "staging intent" and
+is **not** required alongside `-BundleDirectory`: passing `-BundleDirectory` alone
+already selects the envelope, exactly as the Revit builder does. The reverse is
+also fixed — an envelope-only invocation (`-Envelope` without a staging
+directory) reports `bundle = null` for AutoCAD and never invents a staged path.
+
+No in-repository consumer parses this JSON: the installer, both live-acceptance
+entry points, and the architecture tests check exit codes or the script source.
+The contract is nevertheless closed, because the array-versus-object choice is
+observable to any out-of-repository caller and used to be an asymmetry between
+the two builders. A change to either shape is an interface change that must be
+reflected here.
+
+**Output-contract status.** The rule above is stated as the contract and not as a
+description of a transition period. Two behaviours are made uniform by it: the
+array-versus-envelope selection itself, and the single staging-intent rule that
+selects it. `-Envelope` remains an accepted parameter for AutoCAD callers that
+already pass it; it is simply no longer the only way to reach the envelope. Any
+builder or test that still treats `-BundleDirectory` without `-Envelope` as an
+array contradicts this section and is a defect to fix there, not a second
+interpretation of the contract.
+
+**Output-contract coverage.** The default-array half of the contract is asserted
+by `tests/architecture/Test-AutoCADVersionArchitecture.ps1` and
+`tests/architecture/Test-RevitVersionArchitecture.ps1`: each runs its builder with
+no staging parameter and requires output that starts with `[` and carries neither
+`results` nor `bundle`. The envelope half is asserted by both tests for both
+staging parameters: Revit through `-BundleDirectory` and
+`-RenderManifestDirectory`, AutoCAD through `-Envelope` and, separately, through a
+*successful* staging run that passes `-BundleDirectory` without `-Envelope` and
+requires the object shape, a named bundle directory and a non-empty bundle summary.
+That last case was previously uncovered — nothing failed if AutoCAD withheld the
+envelope whenever `-Envelope` was omitted — so both halves of the contract are now
+asserted per builder.
+
+**Deletion containment guard.** Both builders are allowed to delete exactly one
+thing: a staging directory they own, inside the namespace
+`<canonical repository root>\artifacts\staging`. They default to their own
+subdirectory (`artifacts\staging\autocad-bundles` and
+`artifacts\staging\revit-bundles`), and a caller-supplied `-StagingRoot` moves the
+*staging root* without moving the containment namespace. Every deletion target —
+`-BundleDirectory`, the Revit `-RenderManifestDirectory`, and the staging root
+itself — passes the same assertion chain, whose rules are contract and are
+implemented identically in `eng/Build-AutoCADAdapters.ps1` and
+`eng/Build-RevitAdapters.ps1`:
+
+- **Raw traversal segments are refused before any canonicalisation.**
+  `Assert-InContainmentNamespace` first splits the *raw* input path on `[\\/]` and
+  refuses the value if any segment is exactly `..` (case-sensitive), and only then
+  calls `[IO.Path]::GetFullPath`. The check covers both the deletion candidate and
+  the staging root, because both are inputs to the same assertion. This order is
+  the rule: `GetFullPath` collapses `..`, so a normalisation-first
+  implementation silently accepts `foo\..\bar`, and a path that folds back inside
+  the namespace — `artifacts\staging\x\..\artifacts\staging\y` — would be refused
+  only as "outside the repository artifacts staging area", which misreports a
+  deliberate traversal refusal as a containment verdict. A traversal refusal must
+  always name traversal.
+- **Every existing intermediate segment between the containment root and the
+  staging root is classified.** `Get-SafeStagingRoot` walks the segments from the
+  canonical containment root down to the requested staging root and throws on the
+  first existing link-style reparse point, before it classifies the staging root
+  itself. A staging root is a namespace and may be named before it exists, so
+  segments that do not exist are skipped rather than created; only existing
+  segments can carry a link, and classifying just the final staging root left a
+  junction or symbolic link in an intermediate segment free to redirect the later
+  recursive delete outside the repository staging namespace. The failure is
+  fail-closed: the invocation throws, nothing is deleted, and any file outside the
+  namespace is left byte-identical.
+- **Link classification is by reparse tag, not by attributes.** Only the
+  directory-junction/mount-point tag (`0xA0000003`) and the symbolic-link tag
+  (`0xA000000C`) can redirect a recursive delete, and only those two are refused.
+  A host that classifies every synced folder as a reparse point (the cloud
+  placeholder tag of a synced working copy, `0x9000e01a`) must keep working, so a
+  non-link reparse point is not treated as an escape — a guard that refuses on the
+  reparse *attribute* instead of the tag would refuse the repository's own working
+  copy. A tag that cannot be read is the exception: the tag is what decides, so a
+  read failure is refused instead of assumed benign, and a tag value that is not
+  an eight-digit hexadecimal tag is refused rather than read as a non-link. A host
+  that reports the reparse attribute for a synced directory and then answers that
+  the path is not a reparse point is the one accepted non-link outcome, because
+  there is no tag that could redirect anything.
+- **Containment is proven on canonical paths with separator-terminated,
+  case-insensitive prefixes**, checked against both the staging root and the
+  `artifacts\staging` namespace, so a sibling such as `artifacts\staging-evil` is
+  not inside the namespace.
+- **The staging root is never itself a deletion target**, and a deletion candidate
+  is canonicalised through its deepest existing ancestor with the link-style
+  reparse points of that ancestor chain rejected.
+- **The chain from the repository root down to and including the containment root
+  is classified too.** Classifying only the segments *after* the containment root
+  left the namespace's own anchor unverified: `artifacts` and `artifacts\staging`
+  are the two components a recursive delete ultimately depends on, and the
+  canonicalising step resolves a path through a link instead of reporting it, so
+  a link there is invisible to every check that trusts the canonical value.
+  Every existing segment of the canonical repository root → `artifacts` →
+  `artifacts\staging` chain is therefore walked and classified with the same
+  reparse-tag rule as the segments
+  below it, and the containment root itself is classified as well, not only the
+  requested staging root. Until this rule existed, a junction or symbolic link at
+  the containment root — the precise thing an attacker-controlled staging layout
+  would use — was never classified, so the namespace could be relocated by the
+  anchor the rest of the guard trusted.
+- **A missing containment root is not an escape, and a segment that cannot be
+  trusted is a refusal.** A first run has no `artifacts\staging` yet, so an absent
+  segment is skipped rather than created or rejected, exactly as below the
+  containment root. An existing segment that cannot be inspected, that is not a
+  directory, or whose reparse tag cannot be read fails closed: the tag decides
+  whether the segment is a link escape, so an unreadable tag cannot be treated as
+  the permissive case. These classifications run in the same validation pass as
+  the rest of the assertion chain, which is why the refusal happens before any
+  write and before any removal.
+
+**Deletion-time re-check contract.** The guard above is a *contract about the
+moment of deletion*, not only about the moment the build starts:
+
+- **Every recursive force-removal is immediately preceded by its own complete
+  guard invocation, and it removes only the path that invocation returns.**
+  Concretely, `Assert-ContainedStagingDirectory` is called again at the removal
+  site and the removal target is the value it returns from that call. Between the
+  preflight and a removal there can be a long build, and the target can be
+  replaced by a junction or symbolic link in that window; a path proven
+  safe earlier is not proven safe at deletion time. Each removal site therefore
+  calls the full assertion chain again in its own right and passes the canonical
+  path returned by *that* call to the removal, never a path retained from an
+  earlier check.
+- **The preflight is preserved and is still required, but it is never sufficient
+  authorisation for a later removal.** An unsafe input must keep being refused
+  before any build work starts, so the up-front validation stays; a removal that
+  relies on it alone contradicts this contract.
+- **The same rule governs the Revit render-manifest path.** Overwriting, clearing
+  or writing `-RenderManifestDirectory` content is a mutation of the containment
+  namespace and is authorised the same way: re-derived by the guard at the point
+  of use, not enabled by an earlier result.
+- **The re-check is not short-circuited by the preflight's target having
+  disappeared.** It re-derives the canonical path through the deepest existing
+  ancestor and makes its own existence decision, so a target that is absent at
+  deletion time is still classified rather than deleted on the strength of an
+  earlier verdict; a re-check that trusts a stale existence test and skips the
+  guard degrades to an unguarded removal and contradicts this section.
+- **Adjacency is structure, so it is asserted structurally.** The guard call and
+  the removal it authorises are adjacent statements — no other write, removal or
+  path-producing operation between them — and the assertion applies to every
+  recursive force-removal site in both builders, not to a sample. A removal
+  authorised by a path computed before intervening work fails the structure
+  assertion even when the guard itself is still called somewhere earlier.
+- **Both builders carry the same structure with their own evidence.** The two
+  implementations are semantically symmetric — same refusal classes, same
+  rejection timing, same canonical-path source — and differ only in error text
+  (`bundle directory` versus `staging directory`) and in their default staging
+  subdirectory name. Symmetry is required to be proven by paired assertions in
+  the two architecture tests, one per builder, rather than by reading one
+  builder's source and assuming the other matches.
+
+**Path-guard regression coverage.** The guard contract above is carried per
+builder by `tests/architecture/Test-AutoCADVersionArchitecture.ps1` and
+`tests/architecture/Test-RevitVersionArchitecture.ps1`, which are the independent
+evidence for it and are required to exit 0. Each test drives the pure guard
+functions without dot-sourcing a builder into the test
+scope, requires a traversal refusal (not an `outside the` verdict) for a raw `..`
+input and for a traversal that folds back inside the staging namespace, requires a
+*deletion-time* containment failure when an intermediate junction inside the
+repository staging namespace points at a controlled external directory, and
+requires every external witness or sentinel file to survive unchanged.
+
+The regression coverage required for the two rules above lives in those same two
+tests, in the same style, rather than in a new file. Per builder, that coverage
+must: place a controlled junction as the containment root itself and require a
+refusal before any write or removal, with the external witness file's SHA-256 and
+content unchanged; require that a non-link reparse tag (the cloud placeholder tag
+of a synced working copy) is *not* refused, because a host that classifies every
+synced folder as a reparse point must keep building, while a segment whose
+reparse tag cannot be read is refused; and show, from the builder's own parsed
+structure, that each recursive force-removal site is preceded directly by a guard
+invocation whose returned canonical path is the removal target. The execution half
+replaces the target with a controlled junction after the preflight and requires
+the removal to be refused with the outside witness intact. All fixtures are
+run-scoped scratch directories under the system temp root, never a real user
+profile, repository root or Autodesk installation directory; a fixture the host
+refuses to create fails the test instead of being skipped, so a missing negative
+case cannot pass silently.
+
+`tests/architecture/Test-ArchitecturePathGuard.ps1` does **not** exist in the
+working tree, and it is no longer a required new file: the two per-builder tests
+above already carry the independent regression for both rules, which is why this
+section previously describing it as "the required new test" was inaccurate. A
+separate consolidated test file would only de-duplicate that coverage; it is not
+a gap in the contract.
+
+**Unavailable-release gap semantics.** A requested Autodesk release whose product
+is not installed, whose API reference is absent, or whose runtime cannot be
+resolved is reported as an explicit `gap`, never as a fabricated success and
+never as a silent skip:
+
+- The `results` entry for that release has `status = "unavailable"`, a `reason`,
+  and a stable `gap` id of the form `revit-<year>-not-installed`.
+- The `gaps` entry is the full evidence record built by
+  `New-RevitUnavailableGap`: `id`, `year`, `product`, `missing` and
+  `expectedPath` (the first probed path that was absent), `probeCommand`, the
+  per-path `probeEvidence`, `observed`, `blockedTask`, `impact`, `severity =
+  "blocking"`, and `fakeSuccess = false`.
+- The staged Revit index carries the same records in `unavailableReleases`, and
+  the integration manifest republishes them as `revitUnavailableReleases`.
+- Without `-SkipUnavailable` the builder fails closed and throws instead of
+  staging a partial package.
+
+Revit 2026 is the current instance of this case: it is not installed on the
+certification machine, so the staged package deliberately contains no Revit 2026
+connector and declares `revit-2026-not-installed`. The matrix entry stays
+`certified`, and absence of an installed product never removes an entry from the
+matrix. A skipped runtime does not block compatible installed products, and any
+stale manifest for the skipped release is removed inside the installer's
+recoverable transaction rather than left for Autodesk to load.
 
 ## Adding a future Revit release
 

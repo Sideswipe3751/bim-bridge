@@ -1,0 +1,45 @@
+# Ownership baseline for the DeepSeek Harness adapter test suite.
+#
+# This repository has one shared working tree and no worktree isolation: several
+# members edit eng/**, src/**, installer/** and tests/adapters/kimi/** while this
+# suite runs. The suite therefore does not scan the whole dirty worktree for
+# ownership violations by default - that cannot tell another member's legitimate
+# work from this adapter's footprint, and produced a false failure for every
+# delivery that touched a shared layer.
+#
+# The ownership gate is opt-in and reproducible. Point the suite at this file:
+#
+#   pwsh -NoProfile -File tests/adapters/deepseek-harness/Test-DeepSeekHarnessAdapter.ps1 `
+#     -OwnershipBaselinePath tests/adapters/deepseek-harness/ownership-baseline.txt
+#
+# or set BIM_BRIDGE_DSH_OWNERSHIP_BASELINE to the same path. The gate then fails
+# unless every shared-layer path reported dirty by
+# `git status --porcelain --untracked-files=no` appears in the list below.
+#
+# Keep this list explicit and reviewed: it is the caller's declaration of which
+# shared-layer paths are already allowed to be dirty before the run. Refresh it
+# deliberately when the phase's set of edited shared-layer files changes, and
+# never widen it to hide an unexpected modification.
+#
+# The independent, always-on half of the same requirement is the content
+# snapshot in the suite itself: the read-only shared-layer files this adapter
+# must never modify are hashed before and after the run and must be identical.
+# That check needs no baseline and cannot be skipped.
+#
+# Untracked additions are deliberately out of scope for the gate: they are this
+# phase's own new files rather than modifications of an existing shared-layer
+# file, and excluding them keeps the verdict reproducible across reruns.
+#
+# --- tracked shared-layer paths already modified at the 2026-08-16 review ---
+eng/AutodeskVersionMatrix.ps1
+eng/Build-AutoCADAdapters.ps1
+eng/Build-RevitAdapters.ps1
+eng/RevitVersionMatrix.ps1
+.github/workflows/ci.yml
+tests/adapters/kimi/Test-KimiAdapter.ps1
+tests/architecture/Test-AutoCADVersionArchitecture.ps1
+# --- added at the 2026-09-12 minimal-repair review: these two were modified by the
+# --- path-guard / contract repair phase and were missing from the list, so the
+# --- opt-in gate failed on every run that enabled it ---
+docs/architecture.md
+tests/architecture/Test-RevitVersionArchitecture.ps1

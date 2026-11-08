@@ -39,6 +39,15 @@ jobs:
         shell: powershell
         run: .\tests\installer\Test-BimBridgeInstaller.ps1
 
+      - name: Run installer private-runtime preflight tests
+        # Guards the read-only `-ValidateOnly` contract: the preflight and the real
+        # install must resolve the same private Python runtime, a state file may not
+        # name an interpreter outside its own state root, and the test-seam state
+        # overrides may only be used by that preflight. Fully hermetic - it injects
+        # controlled state files and never installs anything.
+        shell: powershell
+        run: .\tests\installer\Test-BimBridgePreflightPython.ps1
+
       - name: Validate BIM Bridge listing logo
         shell: powershell
         run: .\tests\branding\Test-BimBridgeLogo.ps1
@@ -61,6 +70,7 @@ jobs:
           .\tests\architecture\Test-RevitVersionArchitecture.ps1
           .\tests\architecture\Test-RevitRuntimeResolution.ps1
           .\tests\architecture\Test-AutoCADVersionArchitecture.ps1
+          .\tests\architecture\Test-BimBridgeVersionAuthority.ps1
 
       - name: Run runtime, protocol, and adapter tests
         run: |
@@ -72,6 +82,14 @@ jobs:
         run: python -m unittest discover -s tests/mcp -p "test_*.py"
 
       - name: Run shared bridge tests
+        # Two constraints the matrix adapter builds already apply. The shared
+        # host project targets four frameworks, and its multi-target build fails
+        # with no reported diagnostic unless build nodes are serialised; `dotnet
+        # run` does not forward MSBuild switches, so the serial build and the
+        # test run are separate steps. The NuGet vulnerability audit stays
+        # enabled here: this is a networked hosted runner, and audit findings are
+        # exactly what CI is supposed to surface. Only the local offline
+        # re-verification path (`-Offline`) disables it.
         run: |
           dotnet build tests/BimBridge.Host.Tests -c Release -f net10.0 -m:1 -nodeReuse:false
           dotnet run --project tests/BimBridge.Host.Tests -c Release -f net10.0 --no-build

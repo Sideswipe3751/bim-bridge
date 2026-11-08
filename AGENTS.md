@@ -32,6 +32,12 @@ planning the run. Treat recorded timings and process IDs as historical evidence,
 not current session state. Keep exact native readback and actual image review;
 do not relax acceptance criteria to improve a benchmark.
 
+When preparing Canadian IKEA furniture production in this local checkout, check
+`output/ikea-canada-catalog-20261102/START_HERE.md` if present. It points to the
+local SQLite catalogue, source-coverage evidence, and batch proposal helper.
+The dated catalogue is a snapshot, not live inventory; verify each selected SKU's
+current source and complete measurement diagram before modeling.
+
 ## Installation requests
 
 When a user asks an agent to install BIM Bridge from this GitHub repository,

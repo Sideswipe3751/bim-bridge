@@ -100,19 +100,44 @@ function Resolve-AutoCADMatrixEntry(
 function New-AutoCADPackageContents(
     [object[]]$Releases,
     [string]$AppVersion = '2.0.0',
-    [string]$TemplatePath = (Join-Path (Split-Path -Parent $PSScriptRoot) 'src\BimBridge.AutoCAD\PackageContents.template.xml')
+    [string]$TemplatePath = (Join-Path (Split-Path -Parent $PSScriptRoot) 'src\BimBridge.AutoCAD\PackageContents.template.xml'),
+    [string]$ModuleDirectorySuffix = 'Contents\Windows'
 ) {
     if (-not $Releases -or $Releases.Count -eq 0) {
         throw 'At least one resolved AutoCAD matrix entry is required.'
     }
+    # The module directory is a package-internal relative path. A rooted path, a
+    # `..` segment, or an empty segment would move the declared module outside
+    # the bundle the manifest describes, so anything but a plain relative
+    # directory chain is refused before a single component is rendered.
+    if ([string]::IsNullOrWhiteSpace($ModuleDirectorySuffix)) {
+        throw 'The AutoCAD bundle module directory is required.'
+    }
+    if ([IO.Path]::IsPathRooted($ModuleDirectorySuffix)) {
+        throw "The AutoCAD bundle module directory must be a relative path inside the bundle: $ModuleDirectorySuffix"
+    }
+    $segments = @([string]$ModuleDirectorySuffix -split '[\\/]' | Where-Object { $_ -ne '' })
+    if ($segments.Count -eq 0) {
+        throw "The AutoCAD bundle module directory must name at least one relative directory: $ModuleDirectorySuffix"
+    }
+    foreach ($segment in $segments) {
+        if ($segment -eq '..') {
+            throw "The AutoCAD bundle module directory must not escape the bundle with a '..' segment: $ModuleDirectorySuffix"
+        }
+        if ($segment -eq '.') {
+            throw "The AutoCAD bundle module directory must not contain a '.' segment: $ModuleDirectorySuffix"
+        }
+    }
+    $moduleRoot = ($segments -join '/')
     $components = @($Releases | ForEach-Object {
         $series = [Security.SecurityElement]::Escape([string]$_.Series)
         $year = [Security.SecurityElement]::Escape([string]$_.Include)
         $assembly = [Security.SecurityElement]::Escape([string]$_.AssemblyName)
+        $modulePath = [Security.SecurityElement]::Escape("./$moduleRoot/$year/$assembly.dll")
 @"
   <Components Description="AutoCAD $year">
     <RuntimeRequirements OS="Win64" Platform="AutoCAD*" SeriesMin="$series" SeriesMax="$series" />
-    <ComponentEntry AppName="BIM Bridge" Version="$([Security.SecurityElement]::Escape($AppVersion))" ModuleName="./Contents/Windows/$year/$assembly.dll" AppDescription="BIM Bridge local AutoCAD connector" LoadReasons="LoadOnAutoCADStartup" />
+    <ComponentEntry AppName="BIM Bridge" Version="$([Security.SecurityElement]::Escape($AppVersion))" ModuleName="$modulePath" AppDescription="BIM Bridge local AutoCAD connector" LoadReasons="LoadOnAutoCADStartup" />
   </Components>
 "@
     }) -join [Environment]::NewLine

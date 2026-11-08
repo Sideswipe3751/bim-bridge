@@ -297,9 +297,57 @@ try {
         Assert ($installerText -match 'previousLegacyMcp\s*=\s*Get-CodexMcp') 'The previous legacy MCP registration is not captured.'
     }
 
+    Invoke-Test 'read-only preflight contract is enforced before any read or write' {
+        $installerText = Get-Content -LiteralPath $mainInstaller -Raw
+        $installerAst = [System.Management.Automation.Language.Parser]::ParseFile($mainInstaller, [ref]$null, [ref]$null)
+
+        # Static order: the two guards must be the first statements that can throw, and
+        # must precede every CLI/MCP/state/process/ShouldProcess/write statement.
+        $guardValidateOnly = $installerText.IndexOf('-ValidateOnly is a read-only preflight')
+        $guardOverrides = $installerText.IndexOf('read-only preflight test seams')
+        Assert ($guardValidateOnly -gt 0) 'The installer has no ValidateOnly action restriction.'
+        Assert ($guardOverrides -gt 0) 'The installer has no override test-seam restriction.'
+        foreach ($later in @(
+                @{ Pattern = 'Find-CodexCli$'; Name = 'CLI discovery' },
+                @{ Pattern = 'previousNewMcp = Get-CodexMcp'; Name = 'MCP read' },
+                @{ Pattern = 'Get-Content -LiteralPath \$statePath'; Name = 'install-state read' },
+                @{ Pattern = 'Get-Process -Name Revit,acad'; Name = 'running-Autodesk check' },
+                @{ Pattern = 'New-Item -ItemType Directory -Force -Path \$stateRoot'; Name = 'state-root write' },
+                @{ Pattern = 'Remove-CodexMcp \$codexCli \$newMcpName$'; Name = 'MCP mutation' },
+                @{ Pattern = 'Stop-OwnedHostProcesses @\(\$stateRoot\)'; Name = 'process stop' })) {
+            $index = [regex]::Match($installerText, $later.Pattern, 'Multiline').Index
+            if ($index -ge 0) {
+                Assert ($guardValidateOnly -lt $index) "The ValidateOnly action restriction is not enforced before $($later.Name)."
+                Assert ($guardOverrides -lt $index) "The override restriction is not enforced before $($later.Name)."
+            }
+        }
+
+        # The preflight must not be reachable for Uninstall at all: the uninstall branch
+        # has to come after the guard, and the guard must reject the combination.
+        Assert ($installerText -match "if \(\`$ValidateOnly -and \`$Action -notin @\('Install', 'Repair'\)\)") 'The installer does not restrict which actions -ValidateOnly may be combined with.'
+        Assert ($installerText -match "\`$overrideSupplied -and \(-not \`$ValidateOnly -or \`$Action -notin @\('Install', 'Repair'\)\)") 'The override seam is not restricted to a permitted read-only preflight.'
+
+        # Both resolutions - preflight and real install - must go through the one helper
+        # that applies the trusted-source containment rules.
+        Assert ($installerText -match 'function Resolve-PrivatePythonSource') 'The shared private Python resolver is missing.'
+        Assert ($installerText -match 'function Test-PathContainedInDirectory') 'The trusted-source containment helper is missing.'
+        $resolverCalls = @([regex]::Matches($installerText, 'Resolve-PrivatePythonSource \$SourceRoot \$currentState \$legacyState \$effectiveStateRoot \$effectiveLegacyStateRoot'))
+        Assert ($resolverCalls.Count -eq 2) "Expected the preflight and the install path to share the resolver, found $($resolverCalls.Count) call sites."
+        Assert (@($installerAst.FindAll({
+                        param($node)
+                        $node -is [System.Management.Automation.Language.CommandAst] -and $node.GetCommandName() -eq 'Resolve-PrivatePythonSource'
+                    }, $true)).Count -eq 2) 'The resolver is not invoked from exactly two places in the parsed script.'
+    }
+
     Invoke-Test 'repair can reuse the installed private runtime' {
         $installerText = Get-Content -LiteralPath $mainInstaller -Raw
-        Assert ($installerText -match '\$currentState\s+-and\s+\$currentState\.python') 'Repair cannot source the current private Python runtime.'
+        # The install path no longer inlines the fallback chain: it consumes the shared
+        # resolver, which is what makes the preflight and the install agree. The check
+        # therefore asserts that the current install-state still feeds the resolver,
+        # rather than that a specific inline `if` survived.
+        Assert ($installerText -match '\$CurrentState\.python') 'The shared resolver does not consume the current install-state private Python.'
+        Assert ($installerText -match 'Resolve-PrivatePythonSource \$SourceRoot \$currentState \$legacyState') 'The install path does not resolve the private Python through the shared resolver.'
+        Assert ($installerText -match 'Copy-Directory \$pythonSource') 'The installer no longer stages the resolved private Python runtime.'
         Assert ($installerText -match "integrityScope='critical-runtime-and-adapter-files'") 'The installer does not declare its bounded integrity scope.'
         Assert ($installerText -notmatch 'New-FileRecords\s+\$ownedPaths') 'Integrity checks still hash every private runtime file.'
         Assert ($installerText -match 'Remove-StaleTransactionDirectories\s+\$stateRoot') 'Successful repair does not clean safely scoped stale transaction directories.'

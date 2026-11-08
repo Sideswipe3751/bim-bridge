@@ -298,3 +298,6 @@ try {
         }
     }
 }
+
+# The last child process is expected to fail. Clear its exit code after all checks pass.
+$global:LASTEXITCODE = 0

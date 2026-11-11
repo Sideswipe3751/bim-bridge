@@ -298,7 +298,7 @@ try {
     }
 
     Invoke-Test 'read-only preflight contract is enforced before any read or write' {
-        $installerText = Get-Content -LiteralPath $mainInstaller -Raw
+        $installerText = (Get-Content -LiteralPath $mainInstaller -Raw).Replace("`r`n", "`n")
         $installerAst = [System.Management.Automation.Language.Parser]::ParseFile($mainInstaller, [ref]$null, [ref]$null)
 
         # Static order: the two guards must be the first statements that can throw, and
@@ -315,11 +315,10 @@ try {
                 @{ Pattern = 'New-Item -ItemType Directory -Force -Path \$stateRoot'; Name = 'state-root write' },
                 @{ Pattern = 'Remove-CodexMcp \$codexCli \$newMcpName$'; Name = 'MCP mutation' },
                 @{ Pattern = 'Stop-OwnedHostProcesses @\(\$stateRoot\)'; Name = 'process stop' })) {
-            $index = [regex]::Match($installerText, $later.Pattern, 'Multiline').Index
-            if ($index -ge 0) {
-                Assert ($guardValidateOnly -lt $index) "The ValidateOnly action restriction is not enforced before $($later.Name)."
-                Assert ($guardOverrides -lt $index) "The override restriction is not enforced before $($later.Name)."
-            }
+            $match = [regex]::Match($installerText, $later.Pattern, 'Multiline')
+            Assert $match.Success "The installer test could not locate $($later.Name)."
+            Assert ($guardValidateOnly -lt $match.Index) "The ValidateOnly action restriction is not enforced before $($later.Name)."
+            Assert ($guardOverrides -lt $match.Index) "The override restriction is not enforced before $($later.Name)."
         }
 
         # The preflight must not be reachable for Uninstall at all: the uninstall branch

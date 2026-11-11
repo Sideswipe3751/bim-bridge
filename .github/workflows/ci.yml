@@ -67,9 +67,9 @@ jobs:
       - name: Run architecture contract tests
         shell: powershell
         run: |
-          .\tests\architecture\Test-RevitVersionArchitecture.ps1
+          .\tests\architecture\Test-RevitVersionArchitecture.ps1 -WithoutAutodesk
           .\tests\architecture\Test-RevitRuntimeResolution.ps1
-          .\tests\architecture\Test-AutoCADVersionArchitecture.ps1
+          .\tests\architecture\Test-AutoCADVersionArchitecture.ps1 -WithoutAutodesk
           .\tests\architecture\Test-BimBridgeVersionAuthority.ps1
 
       - name: Run runtime, protocol, and adapter tests

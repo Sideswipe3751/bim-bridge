@@ -298,3 +298,6 @@ try {
         }
     }
 }
+
+# GitHub's PowerShell wrapper forwards LASTEXITCODE, including expected failures.
+exit 0

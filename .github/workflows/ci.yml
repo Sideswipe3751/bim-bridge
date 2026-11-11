@@ -64,6 +64,10 @@ jobs:
         shell: powershell
         run: .\tests\adapters\kimi\Test-KimiAdapter.ps1
 
+      - name: Validate DeepSeek Harness adapter
+        shell: powershell
+        run: .\tests\adapters\deepseek-harness\Test-DeepSeekHarnessAdapter.ps1
+
       - name: Run architecture contract tests
         shell: powershell
         run: |

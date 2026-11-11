@@ -206,6 +206,33 @@ and DSH end-to-end results are recorded as five separate fields per build; see
   directories. In that state `Get-Command dsh` fails while the entry point exists
   on disk, which is precisely the case the discovery order above resolves. This
   adapter adds no PATH entry anywhere and only reads the environment it is given.
+- A connector descriptor can outlive its process. The Runtime lists every
+  descriptor it can read and does not check whether the recorded `processId` is
+  alive, so one stale descriptor makes an unqualified call fail as ambiguous.
+  Pass the exact `instanceId`, or remove the stale descriptor; the adapter never
+  deletes one.
+
+## Verified end-to-end (2026-11-11)
+
+One build was exercised through a real DeepSeek Harness session, not only through
+the adapter suite. The harness ran the `web-agents` profile with this adapter's
+cordis row and Skill against a disposable copy of the test model under
+`%TEMP%`, on instance the selected Revit 2024 instance with connector `1.1.0-rc.3`.
+
+| Step | Result |
+|---|---|
+| Tool discovery | 10 `mcp__bim-bridge__aec_*` tools registered in the session |
+| Instance discovery | the selected Revit 2024 instance listed with its document and capabilities |
+| Document and selection reads | document identity, then two conduit elements |
+| Read code | both conduits' `Comments`/`Mark` values returned |
+| Bounded write | `Comments` set on one conduit, confirmed by a separate read-back |
+| Rollback | a write that threw returned `rolledBack: true`; read-back showed the pre-failure value |
+| Restore | `Comments` cleared, final read-back empty |
+
+Verdict: **PASS** for the Revit 2024 read/write/rollback path on this machine.
+The other six installed builds are **NOT RUN**. This is an operating record, not
+an independent certification, and the suite remains the regression gate. Full
+evidence: [the 2026-11-11 acceptance record](deepseek-harness-acceptance-2026-11-11.md).
 
 ## Limits
 

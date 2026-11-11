@@ -583,7 +583,7 @@ adapters/
   codex/                        # Codex plugin and skill
   workbuddy/                    # experimental WorkBuddy Skill/MCP adapter
   kimi/                         # experimental Kimi Plugin/Skill/MCP adapter
-  deepseek-harness/             # optional thin Cordis adapter, later
+  deepseek-harness/             # experimental thin stdio-MCP adapter
   cli/                          # diagnostics and automation
 src/
   BimBridge.Host/               # neutral connector transport/lifecycle
@@ -1062,9 +1062,13 @@ provider, routing, and policy behavior is delegated to `BimBridgeRuntime`.
 slice still deferred.** The thin stdio-MCP adapter described under "DeepSeek
 Harness adapter contract" mounts the certified `bim-bridge` MCP server, and its
 read-only status, wrapper containment, and PATH-less discovery are covered by its
-own test suite. No `ctx.aec` service exists, Contract v2 is untouched, the
-adapter is not independently certified, and this does not start the
-Codex-independent sequencing decision that the rest of the phase depends on.
+own test suite, which now runs in CI. The Revit 2024 read, bounded-write,
+rollback, and restore path was verified end-to-end through DeepSeek Harness
+`0.1.5-rc.2` on 2026-11-11 (see `docs/deepseek-harness-acceptance-2026-11-11.md`);
+the other installed builds remain unexercised. No `ctx.aec` service exists,
+Contract v2 is untouched, the adapter is not independently certified, and this
+does not start the Codex-independent sequencing decision that the rest of the
+phase depends on.
 
 - first mount the certified BIM Bridge MCP adapter as a Harness MCP plugin
   (implemented for the experimental adapter);

@@ -337,8 +337,21 @@ outside an owned task. Tokens are private capability handles, not claims of
 agent identity, approval grants, or a security boundary against a malicious
 same-user process. Logs redact both `token` and `taskToken`.
 
+The public queue board is the existing read-only `task_status` provider tool.
+It reads one exact instance, including when there is no active document, with
+ordinary connector authentication and no task lease. Its single snapshot
+includes `currentTaskId` for the active or draining holder, plus the existing
+task rows and one-based FIFO positions for queued rows. Each submitted task
+records the connector's validated active model title at submission as
+`documentTitle`; paths and path-derived document IDs are excluded. The title
+is display metadata and does not change when the instance switches documents.
+Execution still requires its own exact current-document check. Owner labels
+are caller-supplied display text, not verified agent identities. Older
+connectors can omit the additive fields.
+
 Task control is a synchronous `task.control` operation on `/v1/execute`, with an
-exact target and read intent only for status. Leases last 10–300 seconds and use
+exact instance target and read intent only for status. Other actions continue
+to require the exact document. Leases last 10–300 seconds and use
 a monotonic clock. Waiting tasks must renew their waiting lease; granting starts
 a fresh active lease. Expiry or cancellation first cancels any admitted request
 that has not started. An already running native request enters `draining`: no new

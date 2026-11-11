@@ -138,6 +138,10 @@ class TaskCoordinationContractTests(unittest.TestCase):
     def test_public_status_reuses_token_free_snapshots(self):
         self.check("taskStatus", {"tasks": [self.snapshot("queued")]})
         self.check("taskStatus", {"tasks": []})
+        holder = {**self.snapshot("draining"), "documentTitle": "Model A"}
+        waiting = {**self.snapshot("queued"), "taskId": "waiting", "documentTitle": "Model B", "queuePosition": 1}
+        self.check("taskStatus", {"currentTaskId": holder["taskId"], "tasks": [holder, waiting]})
+        self.check("taskStatus", {"currentTaskId": None, "tasks": []})
         with self.assertRaises(ValueError):
             self.check("taskStatus", {"tasks": [{**self.snapshot(), "token": "secret"}]})
 

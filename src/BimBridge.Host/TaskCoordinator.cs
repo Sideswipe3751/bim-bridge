@@ -17,6 +17,7 @@ public sealed class TaskCoordinator
         public string Token = "";
         public string Name = "";
         public string Owner = "";
+        public string? DocumentTitle;
         public string State = "queued";
         public string? DrainOutcome;
         public int LeaseSeconds;
@@ -41,7 +42,7 @@ public sealed class TaskCoordinator
         _now = monotonicSeconds ?? (() => (double)Stopwatch.GetTimestamp() / Stopwatch.Frequency);
     }
 
-    public TaskSubmission Submit(string name, string owner, int leaseSeconds = 120)
+    public TaskSubmission Submit(string name, string owner, int leaseSeconds = 120, string? documentTitle = null)
     {
         ValidateLease(leaseSeconds);
         if (string.IsNullOrWhiteSpace(name) || name.Length > 200) throw new ArgumentException("task_name_invalid");
@@ -52,7 +53,7 @@ public sealed class TaskCoordinator
             if (_queue.Count + (_active == null ? 0 : 1) >= _capacity)
                 throw new InvalidOperationException("task_queue_full");
             var entry = new Entry { Id = Guid.NewGuid().ToString("N"), Token = NewToken(), Name = name,
-                Owner = owner, LeaseSeconds = leaseSeconds, Deadline = _now() + leaseSeconds };
+                Owner = owner, DocumentTitle = documentTitle, LeaseSeconds = leaseSeconds, Deadline = _now() + leaseSeconds };
             _entries.Add(entry.Id, entry);
             _queue.Add(entry);
             Sweep();
@@ -192,7 +193,7 @@ public sealed class TaskCoordinator
 
     private TaskSnapshot Snapshot(Entry entry) => new TaskSnapshot
     {
-        TaskId = entry.Id, Name = entry.Name, Owner = entry.Owner, Status = entry.State,
+        TaskId = entry.Id, Name = entry.Name, Owner = entry.Owner, DocumentTitle = entry.DocumentTitle, Status = entry.State,
         QueuePosition = entry.State == "queued" ? _queue.IndexOf(entry) + 1 : 0,
         LeaseRemainingSeconds = entry.State == "queued" || entry.State == "active"
             ? Math.Max(0, entry.Deadline - _now()) : 0,

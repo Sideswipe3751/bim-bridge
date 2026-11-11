@@ -125,11 +125,16 @@ class SharedFakeConnector(BaseHTTPRequestHandler):
                 pending = any(t["status"] in ("active", "queued") for t in self.server.tasks)
                 task = {"taskId": secrets.token_hex(12), "token": secrets.token_hex(32),
                         "name": control["name"], "owner": control["owner"],
+                        "documentTitle": payload["target"]["document"]["title"],
                         "status": "queued" if pending else "active"}
                 self.server.tasks.append(task)
                 self.write(200, {"task": self.public(task), "token": task["token"]})
             elif action == "status":
-                self.write(200, {"tasks": [self.public(t) for t in self.server.tasks]})
+                holder = next((t["taskId"] for t in self.server.tasks if t["status"] == "active"), None)
+                rows = [self.public(t) for t in self.server.tasks]
+                for position, row in enumerate((r for r in rows if r["status"] == "queued"), 1):
+                    row["queuePosition"] = position
+                self.write(200, {"currentTaskId": holder, "tasks": rows})
             else:
                 task = next((t for t in self.server.tasks if t["taskId"] == control.get("taskId") and t["token"] == control.get("token")), None)
                 if task is None:
@@ -182,7 +187,7 @@ class CoordinationMcpTests(unittest.TestCase):
                                         "provider": PROVIDER, "toolName": "task_cancel"}}})["result"]
             self.assertTrue(result["isError"])
 
-    def test_two_independent_mcp_processes_share_host_queue(self):
+    def test_three_independent_mcp_processes_share_host_queue(self):
         with tempfile.TemporaryDirectory() as temporary:
             http = ThreadingHTTPServer(("127.0.0.1", 0), SharedFakeConnector)
             http.token = "test-host-" + secrets.token_hex(24)
@@ -205,9 +210,10 @@ class CoordinationMcpTests(unittest.TestCase):
                            "AEC_CODEX_PROVIDER_CONFIG": str(provider_config), "BIM_BRIDGE_PROVIDER_CONFIG": str(provider_config)}
             clients = []
             try:
-                clients = [Client(environment), Client(environment)]
-                first, second = clients
-                self.assertNotEqual(first.process.pid, second.process.pid)
+                for adapter in ("codex", "kimi", "deepseek-harness"):
+                    clients.append(Client({**environment, "BIM_BRIDGE_AGENT_ADAPTER": adapter}))
+                first, second, observer = clients
+                self.assertEqual(3, len({client.process.pid for client in clients}))
                 def data(result):
                     self.assertNotIn("error", result)
                     self.assertFalse(result["result"].get("isError"), result)
@@ -227,9 +233,13 @@ class CoordinationMcpTests(unittest.TestCase):
                 self.assertEqual("queued", b["task"]["status"])
                 credentials_a = {"instanceId": args["instanceId"], "taskId": a["task"]["taskId"], "token": a["token"]}
                 credentials_b = {"instanceId": args["instanceId"], "taskId": b["task"]["taskId"], "token": b["token"]}
-                status = data(second.tool("task_status", {"instanceId": args["instanceId"]}, access="read"))
+                status = data(observer.tool("task_status", {"instanceId": args["instanceId"]}, access="read"))
                 self.assertNotIn(a["token"], json.dumps(status))
                 self.assertNotIn(b["token"], json.dumps(status))
+                self.assertEqual(credentials_a["taskId"], status["currentTaskId"])
+                waiting = next(row for row in status["tasks"] if row["taskId"] == credentials_b["taskId"])
+                self.assertEqual(("agent-lamp", "Disposable", 1),
+                                 (waiting["owner"], waiting["documentTitle"], waiting["queuePosition"]))
                 self.assertEqual("queued", data(second.tool("task_poll", credentials_b))["status"])
                 rejected = second.call("aec_execute_write", {"instanceId": args["instanceId"], "application": "revit",
                                                              "documentTitle": "Disposable", "description": "tokenless", "code": "return 1;"})
@@ -243,6 +253,8 @@ class CoordinationMcpTests(unittest.TestCase):
                 self.assertEqual(credentials_a["taskId"], http.executions[0]["taskId"])
                 data(first.tool("task_release", credentials_a))
                 self.assertEqual("active", data(second.tool("task_poll", credentials_b))["status"])
+                status = data(observer.tool("task_status", {"instanceId": args["instanceId"]}, access="read"))
+                self.assertEqual(credentials_b["taskId"], status["currentTaskId"])
                 data(second.tool("task_release", credentials_b))
             finally:
                 for client in clients:

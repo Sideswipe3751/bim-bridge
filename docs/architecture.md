@@ -505,6 +505,19 @@ The project does not fork DeepSeek Harness, implement its agent loop, manage its
 model/session history, or copy its permission system. The same non-goals apply to
 Codex and future agent platforms.
 
+The experimental Cowork adapter runs separately from the stdio process. It
+projects one Revit document.info read through the shared Runtime and returns
+only the application version and four unit identifiers. The shared Revit
+connector adds optional documentUnits to its cached info snapshot, populated
+together with the active document on the UI thread. The Cowork adapter requires
+an operator-pinned instance and document identity digest and checks both
+against the returned snapshot before releasing any data. Older Revit connectors
+without the unit field fail this tool call. The adapter listens on authenticated
+loopback HTTP. Its optional local OAuth gateway verifies Entra delegated access
+tokens against the configured tenant, API, client, user and scope before relaying
+the single MCP route with a separate loopback credential. The connector-only
+Cowork ZIP is separate from the native release installer.
+
 Official DeepSeek references:
 
 - [DeepSeek Harness repository and developer-preview notice](https://github.com/deepseek-ai/deepseek-harness)

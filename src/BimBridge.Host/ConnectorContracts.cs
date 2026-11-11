@@ -31,6 +31,7 @@ public sealed class DocumentDescriptor
 
 public sealed class ConnectorInfo
 {
+    public Dictionary<string, string>? DocumentUnits { get; set; }
     public int ProtocolVersion { get; set; } = 1;
     public string InstanceId { get; set; } = "";
     public string Application { get; set; } = "";

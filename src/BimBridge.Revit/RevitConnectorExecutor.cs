@@ -135,9 +135,18 @@ internal sealed class RevitConnectorExecutor : IConnectorExecutor, IExternalEven
     {
         var uiDocument = application.ActiveUIDocument;
         DocumentDescriptor? document = null;
+        Dictionary<string, string>? documentUnits = null;
         if (uiDocument?.Document != null)
         {
             var activeDocument = uiDocument.Document;
+            var units = activeDocument.GetUnits();
+            documentUnits = new Dictionary<string, string>
+            {
+                ["length"] = units.GetFormatOptions(SpecTypeId.Length).GetUnitTypeId().TypeId,
+                ["area"] = units.GetFormatOptions(SpecTypeId.Area).GetUnitTypeId().TypeId,
+                ["volume"] = units.GetFormatOptions(SpecTypeId.Volume).GetUnitTypeId().TypeId,
+                ["angle"] = units.GetFormatOptions(SpecTypeId.Angle).GetUnitTypeId().TypeId
+            };
             document = new DocumentDescriptor
             {
                 Id = BuildDocumentId(activeDocument),
@@ -151,6 +160,7 @@ internal sealed class RevitConnectorExecutor : IConnectorExecutor, IExternalEven
                 application.Application.VersionNumber,
                 Process.GetCurrentProcess().Id,
                 document);
+            _cachedInfo.DocumentUnits = documentUnits;
         }
     }
 
@@ -328,6 +338,9 @@ internal sealed class RevitConnectorExecutor : IConnectorExecutor, IExternalEven
         ApplicationVersion = source.ApplicationVersion,
         ProcessId = source.ProcessId,
         ConnectorVersion = source.ConnectorVersion,
+        DocumentUnits = source.DocumentUnits == null
+            ? null
+            : new Dictionary<string, string>(source.DocumentUnits),
         Document = source.Document == null ? null : new DocumentDescriptor
         {
             Id = source.Document.Id,

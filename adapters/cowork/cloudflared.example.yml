@@ -1,0 +1,11 @@
+# Locally managed named tunnel. Use the equivalent published application route
+# in the Cloudflare dashboard for a remotely managed tunnel.
+tunnel: REPLACE_WITH_TUNNEL_UUID
+credentials-file: 'C:\REPLACE_WITH_APPROVED_LOCATION\TUNNEL_UUID.json'
+
+ingress:
+  - hostname: mcp.example.com
+    path: ^/mcp$
+    # The OAuth gateway listens here and forwards authorized requests to 8765.
+    service: http://127.0.0.1:8766
+  - service: http_status:404

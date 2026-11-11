@@ -115,13 +115,16 @@ $templatePath = Join-Path $repositoryRoot 'src\BimBridge.AutoCAD\PackageContents
 $templateProductCode = [string]$template.ApplicationPackage.ProductCode
 Assert-True (-not [string]::IsNullOrWhiteSpace($templateProductCode)) 'The AutoCAD package template has no ApplicationPackage ProductCode.'
 
-$resolvedEntries = @($entries | ForEach-Object { Resolve-AutoCADMatrixEntry $_ })
-$rendered = New-AutoCADPackageContents $resolvedEntries '2.0.0' $templatePath 'Contents\Windows'
+# Manifest rendering consumes the release year, series and assembly name from the matrix.
+$renderEntries = if ($WithoutAutodesk) { $entries } else {
+    @($entries | ForEach-Object { Resolve-AutoCADMatrixEntry $_ })
+}
+$rendered = New-AutoCADPackageContents $renderEntries '2.0.0' $templatePath 'Contents\Windows'
 [xml]$renderedPackage = $rendered
 Assert-True ([string]$renderedPackage.ApplicationPackage.ProductCode -eq $templateProductCode) 'The rendered AutoCAD package lost the template ProductCode.'
 $renderedComponents = @($renderedPackage.ApplicationPackage.Components)
-Assert-True ($renderedComponents.Count -eq $resolvedEntries.Count) "The rendered AutoCAD package declares $($renderedComponents.Count) components for $($resolvedEntries.Count) matrix releases."
-foreach ($resolved in $resolvedEntries) {
+Assert-True ($renderedComponents.Count -eq $renderEntries.Count) "The rendered AutoCAD package declares $($renderedComponents.Count) components for $($renderEntries.Count) matrix releases."
+foreach ($resolved in $renderEntries) {
     $year = [string]$resolved.Include
     $component = @($renderedComponents | Where-Object { [string]$_.Description -eq "AutoCAD $year" })
     Assert-True ($component.Count -eq 1) "The rendered AutoCAD package has no single component for AutoCAD $year."

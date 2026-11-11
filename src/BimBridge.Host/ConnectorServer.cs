@@ -249,6 +249,28 @@ public sealed class ConnectorServer : IDisposable
             description = string.IsNullOrWhiteSpace(description) ? "Capture Revit view" : description;
             code = "";
         }
+        else if (operation == "conduit.ends" || operation == "conduit.connect")
+        {
+            bool connecting = operation == "conduit.connect";
+            var options = payload.Conduit;
+            if (mode != (connecting ? "write" : "read") || options == null ||
+                string.IsNullOrWhiteSpace(payload.Target?.Document?.Id) ||
+                options.FirstId <= 0 || options.SecondId <= 0 || options.FirstId == options.SecondId ||
+                (connecting
+                    ? (options.FirstEnd != 0 && options.FirstEnd != 1) || (options.SecondEnd != 0 && options.SecondEnd != 1)
+                    : options.FirstEnd.HasValue || options.SecondEnd.HasValue))
+            {
+                WriteJson(context, 400, new { error = "invalid_conduit_request", message = "Expected an exact document, two distinct conduit IDs and, for a write, both end indices (0 or 1)" });
+                return;
+            }
+            if (!_executor.GetCachedInfo().Capabilities.Contains(operation))
+            {
+                WriteJson(context, 409, new { error = "unsupported_capability" });
+                return;
+            }
+            description = connecting ? "Connect two conduits" : "Read conduit endpoints";
+            code = "";
+        }
         else if (operation == "selection.read")
         {
             if (mode != "read")
@@ -296,7 +318,8 @@ public sealed class ConnectorServer : IDisposable
             operation,
             payload.ViewCapture,
             payload.FamilySession,
-            payload.TaskId);
+            payload.TaskId,
+            payload.Conduit);
         if (!TryQueue(request, out var error, payload.TaskId, payload.TaskToken))
         {
             request.Dispose();
@@ -476,6 +499,7 @@ public sealed class ConnectorServer : IDisposable
         public string? Code { get; set; }
         public string? Operation { get; set; }
         public ConnectorViewCaptureOptions? ViewCapture { get; set; }
+        public ConnectorConduitOptions? Conduit { get; set; }
         public ConnectorFamilySessionOptions? FamilySession { get; set; }
         public int? TimeoutSeconds { get; set; }
         public ConnectorExecutionTarget? Target { get; set; }

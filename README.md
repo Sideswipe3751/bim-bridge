@@ -76,6 +76,19 @@ experimental adapter reports an unavailable Host and stops. See
 - Includes a private, version-pinned Python runtime; end users do not need to
   install or configure Python.
 
+### Revit conduit connections (development)
+
+The `bimbridge.conduit.v1` provider in a matching development Host exposes
+`get_conduit_ends` and `connect_conduits`. Read the two conduits by element ID
+and specify the endpoint index (0 or 1) for each. Calls require the Revit
+`instanceId` and active `documentTitle`. Use the provider write tool with
+`dryRun: true` to preview the request before executing it.
+
+The router joins straight, same-diameter conduits directly, with one elbow,
+or with a bridging conduit and two elbows. It preserves the opposite ends
+and their connections, and returns the route and created element IDs. It
+uses Revit's project fittings and does not perform clash detection.
+
 ## Support matrix
 
 | Product | Version | Runtime | Status |

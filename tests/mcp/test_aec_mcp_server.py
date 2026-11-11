@@ -129,6 +129,8 @@ class McpServerTests(unittest.TestCase):
                 "document.info",
                 "selection.read",
                 "view.capture",
+                "conduit.ends",
+                "conduit.connect",
                 "code.read",
                 "code.write",
             ],
@@ -315,6 +317,44 @@ class McpServerTests(unittest.TestCase):
         self.assertEqual("view.capture", FakeConnector.last_execute["operation"])
         self.assertEqual("{3D}", FakeConnector.last_execute["viewCapture"]["viewName"])
         self.assertNotIn("code", FakeConnector.last_execute)
+
+
+    def test_builtin_conduit_preview_and_exact_target_dispatch(self):
+        provider = "bimbridge.conduit.v1"
+        arguments = {"instanceId": "revit-one", "documentTitle": "Test", "firstId": 42, "secondId": 43}
+        self.write_descriptor("revit-two", self.http.server_port)
+        tools = MCP.invoke_tool("aec_search_provider_tools", {"query": "conduit", "provider": provider})
+        self.assertEqual({"get_conduit_ends", "connect_conduits"}, {tool["name"] for tool in tools["tools"]})
+        read = {"provider": provider, "toolName": "get_conduit_ends", "arguments": arguments}
+        self.assertEqual("succeeded", MCP.invoke_tool("aec_call_provider_read", read)["status"])
+        self.assertEqual("conduit.ends", FakeConnector.last_execute["operation"])
+
+        arguments.update(firstEnd=1, secondEnd=0, taskId="owner", taskToken="token")
+        write = {"provider": provider, "toolName": "connect_conduits", "arguments": arguments}
+        FakeConnector.last_execute = None
+        result = MCP.invoke_tool("aec_call_provider_write", {**write, "dryRun": True})
+        self.assertEqual("previewed", result["status"])
+        self.assertFalse(result["willExecute"])
+        self.assertIsNone(FakeConnector.last_execute)
+        with self.assertRaisesRegex(ValueError, "write access"):
+            MCP.invoke_tool("aec_call_provider_read", write)
+        with self.assertRaisesRegex(ValueError, "must be 0 or 1"):
+            MCP.invoke_tool("aec_call_provider_write", {
+                **write, "dryRun": False, "arguments": {**arguments, "firstEnd": 2}
+            })
+        self.assertIsNone(FakeConnector.last_execute)
+
+        result = MCP.invoke_tool("aec_call_provider_write", {**write, "dryRun": False})
+        self.assertEqual("succeeded", result["status"])
+        sent = FakeConnector.last_execute
+        self.assertEqual("conduit.connect", sent["operation"])
+        self.assertEqual("write", sent["mode"])
+        self.assertEqual("revit-one", sent["target"]["instanceId"])
+        self.assertEqual("doc-1", sent["target"]["document"]["id"])
+        self.assertEqual("owner", sent["taskId"])
+        self.assertEqual("token", sent["taskToken"])
+        self.assertEqual({"firstId": 42, "secondId": 43, "firstEnd": 1, "secondEnd": 0}, sent["conduit"])
+        self.assertNotIn("code", sent)
 
 
 if __name__ == "__main__":

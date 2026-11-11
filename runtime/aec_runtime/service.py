@@ -7,7 +7,7 @@ import uuid
 from typing import Any, Iterable
 
 from .audit import AuditTrail, ExecutionJournal
-from . import coordination, family_sessions, job_provider
+from . import conduit_tools, coordination, family_sessions, job_provider
 from .capabilities import (
     CapabilityDefinition,
     CapabilityRegistry,
@@ -212,6 +212,8 @@ class BimBridgeRuntime:
                 raise RuntimeRequestError("Task coordination dryRun must be boolean")
             if type(request.get("timeoutSeconds")) is not int or not 1 <= request["timeoutSeconds"] <= 1800:
                 raise RuntimeRequestError("Task coordination timeoutSeconds must be an integer within contract bounds")
+        if capability_id.startswith("revit.conduit."):
+            conduit_tools.validate(capability_id.removeprefix("revit."), request.get("arguments"))
         if capability_id == "revit.family.session":
             family_sessions.validate(request.get("arguments"), intent)
         plan = self.capabilities.resolve(
@@ -398,6 +400,12 @@ class BimBridgeRuntime:
                 )
             value = connector_request(instance, "GET", "/v1/selection")
             return {"status": "succeeded", "result": value}
+        if capability_id.startswith("revit.conduit."):
+            return conduit_tools.execute(
+                instance, capability_id.removeprefix("revit."), request.get("arguments"),
+                str(request["intent"]), dry_run=request.get("dryRun", False),
+                timeout=int(request.get("timeoutSeconds", 30)),
+            )
         if capability_id == "revit.view.capture":
             arguments = dict(request.get("arguments", {}))
             task_id, task_token = arguments.pop("taskId", None), arguments.pop("taskToken", None)
@@ -468,10 +476,11 @@ class BimBridgeRuntime:
         capability_suffix: str,
         intent: str,
         arguments: dict[str, Any],
+        *, dry_run: bool = False,
     ) -> tuple[dict[str, Any], RoutePlan]:
         target = _target_from_instance(instance)
         capability_id = f"{instance['application']}.{capability_suffix}"
-        request = self._legacy_request(capability_id, intent, target, arguments)
+        request = self._legacy_request(capability_id, intent, target, arguments, dry_run=dry_run)
         plan = self.capabilities.resolve(
             capability_id,
             application=instance["application"],
@@ -541,6 +550,7 @@ class BimBridgeRuntime:
 
     def list_providers(self, probe: bool = False) -> dict[str, Any]:
         result = self.providers.list(probe=probe)
+        result["providers"].append(conduit_tools.descriptor(probe))
         result["providers"].append(coordination.descriptor(probe))
         result["providers"].append(family_sessions.descriptor(probe))
         result["providers"].append(job_provider.descriptor(probe))
@@ -571,6 +581,8 @@ class BimBridgeRuntime:
     def search_provider_tools(
         self, query: str, provider_id: str | None, limit: int
     ) -> dict[str, Any]:
+        if provider_id == conduit_tools.PROVIDER_ID:
+            return conduit_tools.search(query, limit)
         if provider_id == job_provider.PROVIDER_ID:
             return job_provider.search(query, limit)
         if provider_id == family_sessions.PROVIDER_ID:
@@ -605,10 +617,12 @@ class BimBridgeRuntime:
             )
             result["tools"] = result["tools"][:limit]
         if provider_id is None:
-            result["tools"] = (result["tools"] + coordination.search(query, limit)["tools"] + family_sessions.search(query, limit)["tools"] + job_provider.search(query, limit)["tools"])[:limit]
+            result["tools"] = (result["tools"] + conduit_tools.search(query, limit)["tools"] + coordination.search(query, limit)["tools"] + family_sessions.search(query, limit)["tools"] + job_provider.search(query, limit)["tools"])[:limit]
         return result
 
     def provider_schema(self, provider_id: str, tool_name: str) -> dict[str, Any]:
+        if provider_id == conduit_tools.PROVIDER_ID:
+            return conduit_tools.schema(tool_name)
         if provider_id == job_provider.PROVIDER_ID:
             return job_provider.schema(tool_name)
         if provider_id == family_sessions.PROVIDER_ID:
@@ -708,6 +722,8 @@ class BimBridgeRuntime:
         dry_run: bool,
         timeout: int,
     ) -> dict[str, Any]:
+        if provider_id == conduit_tools.PROVIDER_ID:
+            return conduit_tools.invoke(self, tool_name, arguments, requested_access, dry_run, timeout)
         if provider_id == job_provider.PROVIDER_ID:
             return job_provider.invoke(self, tool_name, arguments, requested_access, dry_run, timeout)
         if provider_id == family_sessions.PROVIDER_ID:

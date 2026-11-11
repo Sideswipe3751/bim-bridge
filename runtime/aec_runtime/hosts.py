@@ -281,6 +281,7 @@ def execute_connector_operation(
         "description": "Capture a focused Revit view" if operation == "view.capture" else operation,
         "viewCapture": arguments if operation == "view.capture" else None,
         "familySession": arguments if operation == "family.session" else None,
+        "conduit": arguments if operation in {"conduit.ends", "conduit.connect"} else None,
         "timeoutSeconds": timeout_seconds,
         "target": {
             "application": instance["application"],

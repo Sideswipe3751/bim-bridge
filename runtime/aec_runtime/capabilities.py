@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Iterable
 
+from .conduit_tools import OPERATIONS as CONDUIT_OPERATIONS, input_schema as conduit_input_schema
+
 
 class CapabilityError(RuntimeError):
     """A capability or route cannot be resolved safely."""
@@ -233,6 +235,26 @@ def default_registry() -> CapabilityRegistry:
                         "additionalProperties": False,
                         "dependentRequired": {"taskId": ["taskToken"], "taskToken": ["taskId"]}},
                     candidates=(connector,),
+                ),
+                *(
+                    [
+                        CapabilityDefinition(
+                            f"revit.{operation}", "revit", (access,),
+                            "low" if access == "read" else "high",
+                            input_schema=conduit_input_schema(operation),
+                            required_host_capabilities=(operation,),
+                            supports_dry_run=access == "write",
+                            supports_cancellation=True,
+                            idempotency="guaranteed" if access == "read" else "none",
+                            transaction_guarantee="host_native" if access == "write" else "none",
+                            rollback_guarantee="host_native" if access == "write" else "none",
+                            verification_guarantee="readback",
+                            candidates=(connector,),
+                        )
+                        for operation, access in CONDUIT_OPERATIONS.items()
+                    ]
+                    if application == "revit"
+                    else []
                 ),
                 *(
                     [

@@ -48,6 +48,12 @@ mcp__bim-bridge__aec_...
 Call those tools normally. Only MCP **tools** are bridged: MCP resources and
 prompts are not available in DeepSeek Harness, so do not look for them.
 
+For the queue board, discover `task_status` and call it through
+`aec_call_provider_read` with the exact `instanceId`. Use `currentTaskId` to
+find the holder, `queuePosition` to order waiting tasks, and `owner` and
+`documentTitle` for the applicant label and submission model. No task token
+is needed. Report missing model metadata as unknown on older connectors.
+
 ## Boundaries you must respect
 
 - The Runtime is independent of every agent SDK. This adapter must never become

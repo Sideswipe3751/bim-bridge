@@ -50,6 +50,12 @@ Autodesk process state changes.
 8. When appearance or spatial coordination matters, use the discovered focused
    view-capture capability after structured verification.
 
+For the queue board, discover `task_status` and call it through
+`aec_call_provider_read` with the exact `instanceId`. Use `currentTaskId` to
+find the holder, `queuePosition` to order waiting tasks, and `owner` and
+`documentTitle` for the applicant label and submission model. No task token
+is needed. Report missing model metadata as unknown on older connectors.
+
 ## Kimi permissions and safety
 
 - Kimi Code is the single user-facing approval layer. Keep normal approval mode

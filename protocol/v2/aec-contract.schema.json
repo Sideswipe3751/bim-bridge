@@ -95,6 +95,7 @@
         "taskId": { "type": "string", "minLength": 1, "maxLength": 512 },
         "name": { "type": "string", "minLength": 1, "maxLength": 200 },
         "owner": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "documentTitle": { "type": ["string", "null"], "description": "Model title captured by the connector at submission. Display metadata only; later steps validate their own exact document." },
         "status": { "type": "string", "enum": ["queued", "active", "draining", "completed", "expired", "cancelled"] },
         "queuePosition": { "type": "integer", "minimum": 0 },
         "leaseRemainingSeconds": { "type": "number", "minimum": 0 },
@@ -115,6 +116,7 @@
       "description": "Public queue and bounded completed-task history for one exact instance.",
       "required": ["tasks"],
       "properties": {
+        "currentTaskId": { "type": ["string", "null"], "minLength": 1, "maxLength": 512, "description": "Task currently holding the instance, including while draining. Null when no task holds it." },
         "tasks": { "type": "array", "maxItems": 256, "items": { "$ref": "#/$defs/taskSnapshot" } }
       }
     },

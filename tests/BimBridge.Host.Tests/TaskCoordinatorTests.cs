@@ -11,7 +11,7 @@ public static class TaskCoordinatorTests
 {
     private sealed class TaskExecutor : IConnectorExecutor
     {
-        public string Title = "DisposableTaskTest";
+        public string? Title = "DisposableTaskTest";
         public bool Delay;
         public ConnectorRequest? Pending;
         public ConnectorRequestKind LastKind;
@@ -20,7 +20,8 @@ public static class TaskCoordinatorTests
         {
             InstanceId = "task-http-test", Application = "revit", ApplicationVersion = "2024",
             ProcessId = Process.GetCurrentProcess().Id,
-            Document = new DocumentDescriptor { Id = "task-doc", Title = Title },
+            Document = Title == null ? null : new DocumentDescriptor
+                { Id = "task-doc", Title = Title, Path = "C:/private/model.rvt" },
             Capabilities = new List<string> { "code.read", "code.write", "selection.read", "family.session" }
         };
         public void Submit(ConnectorRequest request)
@@ -62,9 +63,10 @@ public static class TaskCoordinatorTests
                 using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
                 return ((int)response.StatusCode, body.RootElement.Clone());
             }
-            async Task<(int Code, JsonElement Body)> Control(string action, string? id = null, string? token = null)
-                => await Post(new { mode = action == "status" ? "read" : "write", operation = "task.control", target,
-                    taskControl = new { action, taskId = id, token, name = "HTTP family task", owner = "test-agent", leaseSeconds = 120 } });
+            async Task<(int Code, JsonElement Body)> Control(string action, string? id = null, string? token = null,
+                object? requestTarget = null, string owner = "test-agent")
+                => await Post(new { mode = action == "status" ? "read" : "write", operation = "task.control", target = requestTarget ?? target,
+                    taskControl = new { action, taskId = id, token, name = "HTTP family task", owner, leaseSeconds = 120 } });
             var submitted = await Control("submit");
             Check(submitted.Code == 200, "HTTP submit failed");
             string id = submitted.Body.GetProperty("task").GetProperty("taskId").GetString()!;
@@ -115,15 +117,34 @@ public static class TaskCoordinatorTests
             using (var cancel = await client.PostAsync("/v1/requests/" + slow.Body.GetProperty("requestId").GetString() + "/cancel", new StringContent("")))
                 Check((int)cancel.StatusCode == 409, "running request incorrectly cancelled");
             Check((await Control("cancel", id, token)).Body.GetProperty("status").GetString() == "draining", "HTTP cancel did not drain");
-            var next = await Control("submit");
+            executor.Title = "OtherModel";
+            var next = await Control("submit", requestTarget: new { target.application, target.release, target.apiVariant,
+                target.instanceId, target.processId, document = new { id = "task-doc", title = "OtherModel" } }, owner: "other-agent");
             string nextId = next.Body.GetProperty("task").GetProperty("taskId").GetString()!;
             string nextToken = next.Body.GetProperty("token").GetString()!;
             Check(next.Body.GetProperty("task").GetProperty("status").GetString() == "queued", "HTTP handed off running operation");
+            executor.Title = null;
+            var instanceOnly = new { target.application, target.release, target.apiVariant, target.instanceId, target.processId };
+            var board = await Control("status", requestTarget: instanceOnly);
+            Check(board.Code == 200 && board.Body.GetProperty("currentTaskId").GetString() == id, "board lost draining holder with no document open");
+            var rows = board.Body.GetProperty("tasks").EnumerateArray().ToDictionary(row => row.GetProperty("taskId").GetString()!);
+            Check(rows[id].GetProperty("documentTitle").GetString() == "DisposableTaskTest", "board replaced the submission model title");
+            Check(rows[nextId].GetProperty("documentTitle").GetString() == "OtherModel" &&
+                rows[nextId].GetProperty("owner").GetString() == "other-agent" &&
+                rows[nextId].GetProperty("queuePosition").GetInt32() == 1, "board missed the queued applicant, model or position");
+            string boardJson = board.Body.GetRawText();
+            Check(!boardJson.Contains(token) && !boardJson.Contains(nextToken) && !boardJson.Contains("C:/private"), "board exposed credentials or model path");
+            Check((await Control("submit", requestTarget: instanceOnly)).Code == 409, "document-free board relaxed submission targeting");
+            executor.Title = "DisposableTaskTest";
             Done(executor.Pending!);
+            Check((await Control("status", requestTarget: instanceOnly)).Body.GetProperty("currentTaskId").GetString() == nextId,
+                "board missed ownership handoff");
             Check((await Control("poll", nextId, nextToken)).Body.GetProperty("status").GetString() == "active", "HTTP drain never completed");
             Check((await Post(new { mode = "write", description = "stale", code = "return 1;", target, taskId = id, taskToken = token })).Code == 429,
                 "stale token accepted after ownership transfer");
             Check((await Control("release", nextId, nextToken)).Code == 200, "HTTP release failed");
+            Check((await Control("status", requestTarget: instanceOnly)).Body.GetProperty("currentTaskId").ValueKind == JsonValueKind.Null,
+                "board reported a holder after the queue drained");
         }
         finally
         {

@@ -91,7 +91,7 @@ internal sealed class RevitConnectorExecutor : IConnectorExecutor, IExternalEven
                 else if (request.Operation == "family.session")
                     ExecuteFamilySession(application, request);
                 else
-                    ExecuteCode(application, request);
+                    ExecuteModelRequest(application, request);
             }
             catch (Exception exception)
             {
@@ -182,7 +182,7 @@ internal sealed class RevitConnectorExecutor : IConnectorExecutor, IExternalEven
         });
     }
 
-    private static void ExecuteCode(UIApplication application, ConnectorRequest request)
+    private static void ExecuteModelRequest(UIApplication application, ConnectorRequest request)
     {
         var uiDocument = application.ActiveUIDocument;
         if (uiDocument == null)
@@ -192,7 +192,9 @@ internal sealed class RevitConnectorExecutor : IConnectorExecutor, IExternalEven
         }
         if (request.Mode == "read")
         {
-            var result = DynamicRevitCode.Execute(request.Code, application, null);
+            var result = request.Operation == "conduit.ends"
+                ? RevitConduitService.Execute(uiDocument.Document, request)
+                : DynamicRevitCode.Execute(request.Code, application, null);
             request.Complete(new ConnectorCompletion
             {
                 Status = ConnectorRequestStatus.Succeeded,
@@ -223,7 +225,9 @@ internal sealed class RevitConnectorExecutor : IConnectorExecutor, IExternalEven
                     failureOptions.SetForcedModalHandling(false);
                     transaction.SetFailureHandlingOptions(failureOptions);
                 }
-                var result = DynamicRevitCode.Execute(request.Code, application, transaction);
+                var result = request.Operation == "conduit.connect"
+                    ? RevitConduitService.Execute(document, request)
+                    : DynamicRevitCode.Execute(request.Code, application, transaction);
                 if (transaction.Commit() != TransactionStatus.Committed)
                     throw new InvalidOperationException(failurePreprocessor.BuildErrorMessage());
                 transaction.Dispose();
@@ -312,7 +316,7 @@ internal sealed class RevitConnectorExecutor : IConnectorExecutor, IExternalEven
             Document = document,
             Capabilities = new List<string>
             {
-                "document.info", "selection.read", "view.capture", "code.read", "code.write", "transaction.rollback", "task.coordination", "family.session"
+                "document.info", "selection.read", "view.capture", "code.read", "code.write", "transaction.rollback", "task.coordination", "family.session", "conduit.ends", "conduit.connect"
             }
         };
 

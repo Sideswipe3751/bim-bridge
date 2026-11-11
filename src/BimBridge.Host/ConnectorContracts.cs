@@ -101,6 +101,14 @@ public sealed class ConnectorCompletion
     public List<string> Warnings { get; set; } = new List<string>();
 }
 
+public sealed class ConnectorConduitOptions
+{
+    public long FirstId { get; set; }
+    public long SecondId { get; set; }
+    public int? FirstEnd { get; set; }
+    public int? SecondEnd { get; set; }
+}
+
 public sealed class ConnectorViewCaptureOptions
 {
     public long? ViewId { get; set; }
@@ -194,7 +202,8 @@ public sealed class ConnectorRequest : IDisposable
         string operation = "code",
         ConnectorViewCaptureOptions? viewCapture = null,
         ConnectorFamilySessionOptions? familySession = null,
-        string? taskId = null)
+        string? taskId = null,
+        ConnectorConduitOptions? conduit = null)
     {
         RequestId = Guid.NewGuid().ToString("N");
         Kind = kind;
@@ -207,6 +216,7 @@ public sealed class ConnectorRequest : IDisposable
         ViewCapture = viewCapture;
         FamilySession = familySession;
         TaskId = taskId;
+        Conduit = conduit;
         CreatedAtUtc = DateTime.UtcNow;
         DeadlineUtc = CreatedAtUtc.AddSeconds(timeoutSeconds);
     }
@@ -220,6 +230,7 @@ public sealed class ConnectorRequest : IDisposable
     public ConnectorExecutionTarget? ExpectedTarget { get; }
     public string Operation { get; }
     public ConnectorViewCaptureOptions? ViewCapture { get; }
+    public ConnectorConduitOptions? Conduit { get; }
     public ConnectorFamilySessionOptions? FamilySession { get; }
     public string? TaskId { get; }
     public DateTime CreatedAtUtc { get; }

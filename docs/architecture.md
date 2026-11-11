@@ -246,6 +246,16 @@ tools, and the connector carries it as a backward-compatible structured
 operation on `/v1/execute`. No eleventh MCP tool or sixth connector route is
 introduced.
 
+`revit.conduit.ends` and `revit.conduit.connect` are deterministic Revit host
+operations. The `bimbridge.conduit.v1` provider exposes endpoint inspection
+and connection through the existing MCP provider tools and the existing
+`/v1/execute` route. Requests bind the exact instance and active document and
+honor the existing task gate. The host validates explicit endpoint indices,
+executes the route in its ordinary model transaction, and checks connector
+links and the untouched ends before commit. The write preview validates
+arguments and routing without dispatching a mutation. The capability uses
+shared Revit source and does not depend on another installed add-in.
+
 The resolver first removes ineligible candidates by target, runtime/API variant,
 health, trust, and policy. It then prefers the narrowest deterministic provider.
 An agent may request an eligible provider for reproducibility, but policy has the

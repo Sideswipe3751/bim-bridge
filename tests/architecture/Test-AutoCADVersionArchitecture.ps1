@@ -1,5 +1,5 @@
 [CmdletBinding()]
-param()
+param([switch]$WithoutAutodesk)
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version 2.0
@@ -805,56 +805,58 @@ function Get-BuilderJsonPayload([string]$Text) {
     throw "The builder did not emit a JSON payload: $Text"
 }
 
-$legacyRun = Invoke-AutoCADBuilder @('-Version', '2024,2025', '-Configuration', 'Release', '-NoRestore', '-SkipUnavailable', '-StagingRoot', (Join-Path $scratchRoot 'staging'))
-Assert-Pass ($legacyRun.exitCode -eq 0) "The default (no -Envelope) builder invocation failed: $($legacyRun.text)"
-$legacyJson = Get-BuilderJsonPayload $legacyRun.text
-$legacyParse = ConvertFrom-Json $legacyJson
-Assert-Pass (@($legacyParse).Count -ge 1) 'The default output is not iterable as an array after ConvertFrom-Json.'
-Assert-Pass (@($legacyParse | Where-Object { $_.version -eq '2024' }).Count -eq 1) 'The default output lost the AutoCAD 2024 result row.'
-Assert-Pass (@($legacyParse | Where-Object { $_.version -eq '2025' }).Count -eq 1) 'The default output lost the AutoCAD 2025 result row.'
-Assert-Pass ((Get-PropertyValue $legacyParse 'bundle') -eq $null -and (Get-PropertyValue $legacyParse 'results') -eq $null) 'The default output is still an envelope instead of the legacy array.'
-Assert-Pass ($legacyJson.TrimStart().StartsWith('[')) 'The default output does not start with a JSON array.'
-Assert-Pass ($legacyJson -match '"version":\s*"2024"') 'The default output does not carry the AutoCAD 2024 row.'
+if (-not $WithoutAutodesk) {
+    $legacyRun = Invoke-AutoCADBuilder @('-Version', '2024,2025', '-Configuration', 'Release', '-SkipUnavailable', '-StagingRoot', (Join-Path $scratchRoot 'staging'))
+    Assert-Pass ($legacyRun.exitCode -eq 0) "The default (no -Envelope) builder invocation failed: $($legacyRun.text)"
+    $legacyJson = Get-BuilderJsonPayload $legacyRun.text
+    $legacyParse = ConvertFrom-Json $legacyJson
+    Assert-Pass (@($legacyParse).Count -ge 1) 'The default output is not iterable as an array after ConvertFrom-Json.'
+    Assert-Pass (@($legacyParse | Where-Object { $_.version -eq '2024' }).Count -eq 1) 'The default output lost the AutoCAD 2024 result row.'
+    Assert-Pass (@($legacyParse | Where-Object { $_.version -eq '2025' }).Count -eq 1) 'The default output lost the AutoCAD 2025 result row.'
+    Assert-Pass ((Get-PropertyValue $legacyParse 'bundle') -eq $null -and (Get-PropertyValue $legacyParse 'results') -eq $null) 'The default output is still an envelope instead of the legacy array.'
+    Assert-Pass ($legacyJson.TrimStart().StartsWith('[')) 'The default output does not start with a JSON array.'
+    Assert-Pass ($legacyJson -match '"version":\s*"2024"') 'The default output does not carry the AutoCAD 2024 row.'
 
-# Explicit envelope: the builder may stage a bundle and must report it.
-$envelopeStagingRoot = Join-Path $scratchRoot 'staging'
-New-Item -ItemType Directory -Force -Path $envelopeStagingRoot | Out-Null
-$envelopeRoot = Join-Path (Join-Path $scratchRoot 'envelope-root') 'envelope-bundle'
-Assert-Pass ((Split-Path -Parent $envelopeRoot) -eq (Join-Path $scratchRoot 'envelope-root')) 'The envelope bundle fixture is not inside its own scratch staging root.'
-if (Test-Path -LiteralPath $envelopeRoot) { Remove-Item -LiteralPath $envelopeRoot -Recurse -Force }
-New-Item -ItemType Directory -Force -Path $envelopeRoot | Out-Null
-$envelopeRun = Invoke-AutoCADBuilder @('-Version', '2024,2025', '-Configuration', 'Release', '-NoRestore', '-Envelope', '-StagingRoot', (Join-Path $scratchRoot 'envelope-root'), '-BundleDirectory', $envelopeRoot)
-Assert-Pass ($envelopeRun.exitCode -eq 0) "The explicit -Envelope builder invocation failed: $($envelopeRun.text)"
-$envelopeParse = ConvertFrom-Json (Get-BuilderJsonPayload $envelopeRun.text)
-Assert-Pass (@((Get-PropertyValue $envelopeParse 'results')).Count -eq 2) "The envelope does not carry two result rows: $($envelopeRun.text)"
-Assert-Pass ((Get-PropertyValue (Get-PropertyValue $envelopeParse 'bundle') 'bundleDirectory') -eq $envelopeRoot) 'The envelope bundle directory is not the requested staging directory.'
-Assert-Pass (Test-Path -LiteralPath (Join-Path $envelopeRoot 'PackageContents.xml')) 'The staged bundle has no PackageContents.xml.'
-Assert-Pass (Test-Path -LiteralPath (Join-Path $envelopeRoot 'Contents\Windows\2024\BimBridge.AutoCAD2024.dll')) 'The staged bundle has no AutoCAD 2024 module.'
-Assert-Pass (Test-Path -LiteralPath (Join-Path $envelopeRoot 'Contents\Windows\2025\BimBridge.AutoCAD2025.dll')) 'The staged bundle has no AutoCAD 2025 module.'
+    # Explicit envelope: the builder may stage a bundle and must report it.
+    $envelopeStagingRoot = Join-Path $scratchRoot 'staging'
+    New-Item -ItemType Directory -Force -Path $envelopeStagingRoot | Out-Null
+    $envelopeRoot = Join-Path (Join-Path $scratchRoot 'envelope-root') 'envelope-bundle'
+    Assert-Pass ((Split-Path -Parent $envelopeRoot) -eq (Join-Path $scratchRoot 'envelope-root')) 'The envelope bundle fixture is not inside its own scratch staging root.'
+    if (Test-Path -LiteralPath $envelopeRoot) { Remove-Item -LiteralPath $envelopeRoot -Recurse -Force }
+    New-Item -ItemType Directory -Force -Path $envelopeRoot | Out-Null
+    $envelopeRun = Invoke-AutoCADBuilder @('-Version', '2024,2025', '-Configuration', 'Release', '-Envelope', '-StagingRoot', (Join-Path $scratchRoot 'envelope-root'), '-BundleDirectory', $envelopeRoot)
+    Assert-Pass ($envelopeRun.exitCode -eq 0) "The explicit -Envelope builder invocation failed: $($envelopeRun.text)"
+    $envelopeParse = ConvertFrom-Json (Get-BuilderJsonPayload $envelopeRun.text)
+    Assert-Pass (@((Get-PropertyValue $envelopeParse 'results')).Count -eq 2) "The envelope does not carry two result rows: $($envelopeRun.text)"
+    Assert-Pass ((Get-PropertyValue (Get-PropertyValue $envelopeParse 'bundle') 'bundleDirectory') -eq $envelopeRoot) 'The envelope bundle directory is not the requested staging directory.'
+    Assert-Pass (Test-Path -LiteralPath (Join-Path $envelopeRoot 'PackageContents.xml')) 'The staged bundle has no PackageContents.xml.'
+    Assert-Pass (Test-Path -LiteralPath (Join-Path $envelopeRoot 'Contents\Windows\2024\BimBridge.AutoCAD2024.dll')) 'The staged bundle has no AutoCAD 2024 module.'
+    Assert-Pass (Test-Path -LiteralPath (Join-Path $envelopeRoot 'Contents\Windows\2025\BimBridge.AutoCAD2025.dll')) 'The staged bundle has no AutoCAD 2025 module.'
 
-# Staging intent alone selects the envelope: -BundleDirectory without -Envelope
-# must report the bundle it staged instead of silently falling back to the legacy
-# array. This is the same shape the Revit architecture test asserts for
-# -BundleDirectory, and it is the case that was previously uncovered here: the
-# only successful staging run above also passes -Envelope, so withholding the
-# envelope would not have failed this suite.
-$bundleOnlyStagingRoot = Join-Path $scratchRoot 'bundle-only-root'
-New-Item -ItemType Directory -Force -Path $bundleOnlyStagingRoot | Out-Null
-$bundleOnlyRoot = Join-Path $bundleOnlyStagingRoot 'bundle-only'
-Assert-Pass ((Split-Path -Parent $bundleOnlyRoot) -eq $bundleOnlyStagingRoot) 'The bundle-only fixture is not inside its own scratch staging root.'
-if (Test-Path -LiteralPath $bundleOnlyRoot) { Remove-Item -LiteralPath $bundleOnlyRoot -Recurse -Force }
-$bundleOnlyRun = Invoke-AutoCADBuilder @('-Version', '2024,2025', '-Configuration', 'Release', '-NoRestore', '-StagingRoot', $bundleOnlyStagingRoot, '-BundleDirectory', $bundleOnlyRoot)
-Assert-Pass ($bundleOnlyRun.exitCode -eq 0) "The -BundleDirectory-only builder invocation failed: $($bundleOnlyRun.text)"
-$bundleOnlyJson = Get-BuilderJsonPayload $bundleOnlyRun.text
-Assert-Pass ($bundleOnlyJson.TrimStart().StartsWith('{')) "An explicit -BundleDirectory without -Envelope returned a top-level JSON array instead of the envelope: $bundleOnlyJson"
-$bundleOnlyParse = ConvertFrom-Json $bundleOnlyJson
-Assert-Pass (@((Get-PropertyValue $bundleOnlyParse 'results')).Count -eq 2) "The -BundleDirectory-only envelope does not carry two result rows: $bundleOnlyRun.text"
-Assert-Pass ((Get-PropertyValue $bundleOnlyParse 'bundle') -ne $null) "The -BundleDirectory-only output dropped the bundle summary of the run that staged it: $bundleOnlyJson"
-Assert-Pass ((Get-PropertyValue (Get-PropertyValue $bundleOnlyParse 'bundle') 'bundleDirectory') -eq $bundleOnlyRoot) 'The -BundleDirectory-only envelope does not name the requested staging directory.'
-Assert-Pass ((Get-PropertyValue (Get-PropertyValue $bundleOnlyParse 'bundle') 'components').Count -ge 1) 'The -BundleDirectory-only envelope staged an empty bundle summary.'
-Assert-Pass (Test-Path -LiteralPath (Join-Path $bundleOnlyRoot 'PackageContents.xml')) 'The -BundleDirectory-only run staged no PackageContents.xml.'
-Assert-Pass (Test-Path -LiteralPath (Join-Path $bundleOnlyRoot 'Contents\Windows\2024\BimBridge.AutoCAD2024.dll')) 'The -BundleDirectory-only run staged no AutoCAD 2024 module.'
-Assert-Pass (Test-Path -LiteralPath (Join-Path $bundleOnlyRoot 'Contents\Windows\2025\BimBridge.AutoCAD2025.dll')) 'The -BundleDirectory-only run staged no AutoCAD 2025 module.'
+    # Staging intent alone selects the envelope: -BundleDirectory without -Envelope
+    # must report the bundle it staged instead of silently falling back to the legacy
+    # array. This is the same shape the Revit architecture test asserts for
+    # -BundleDirectory, and it is the case that was previously uncovered here: the
+    # only successful staging run above also passes -Envelope, so withholding the
+    # envelope would not have failed this suite.
+    $bundleOnlyStagingRoot = Join-Path $scratchRoot 'bundle-only-root'
+    New-Item -ItemType Directory -Force -Path $bundleOnlyStagingRoot | Out-Null
+    $bundleOnlyRoot = Join-Path $bundleOnlyStagingRoot 'bundle-only'
+    Assert-Pass ((Split-Path -Parent $bundleOnlyRoot) -eq $bundleOnlyStagingRoot) 'The bundle-only fixture is not inside its own scratch staging root.'
+    if (Test-Path -LiteralPath $bundleOnlyRoot) { Remove-Item -LiteralPath $bundleOnlyRoot -Recurse -Force }
+    $bundleOnlyRun = Invoke-AutoCADBuilder @('-Version', '2024,2025', '-Configuration', 'Release', '-StagingRoot', $bundleOnlyStagingRoot, '-BundleDirectory', $bundleOnlyRoot)
+    Assert-Pass ($bundleOnlyRun.exitCode -eq 0) "The -BundleDirectory-only builder invocation failed: $($bundleOnlyRun.text)"
+    $bundleOnlyJson = Get-BuilderJsonPayload $bundleOnlyRun.text
+    Assert-Pass ($bundleOnlyJson.TrimStart().StartsWith('{')) "An explicit -BundleDirectory without -Envelope returned a top-level JSON array instead of the envelope: $bundleOnlyJson"
+    $bundleOnlyParse = ConvertFrom-Json $bundleOnlyJson
+    Assert-Pass (@((Get-PropertyValue $bundleOnlyParse 'results')).Count -eq 2) "The -BundleDirectory-only envelope does not carry two result rows: $bundleOnlyRun.text"
+    Assert-Pass ((Get-PropertyValue $bundleOnlyParse 'bundle') -ne $null) "The -BundleDirectory-only output dropped the bundle summary of the run that staged it: $bundleOnlyJson"
+    Assert-Pass ((Get-PropertyValue (Get-PropertyValue $bundleOnlyParse 'bundle') 'bundleDirectory') -eq $bundleOnlyRoot) 'The -BundleDirectory-only envelope does not name the requested staging directory.'
+    Assert-Pass ((Get-PropertyValue (Get-PropertyValue $bundleOnlyParse 'bundle') 'components').Count -ge 1) 'The -BundleDirectory-only envelope staged an empty bundle summary.'
+    Assert-Pass (Test-Path -LiteralPath (Join-Path $bundleOnlyRoot 'PackageContents.xml')) 'The -BundleDirectory-only run staged no PackageContents.xml.'
+    Assert-Pass (Test-Path -LiteralPath (Join-Path $bundleOnlyRoot 'Contents\Windows\2024\BimBridge.AutoCAD2024.dll')) 'The -BundleDirectory-only run staged no AutoCAD 2024 module.'
+    Assert-Pass (Test-Path -LiteralPath (Join-Path $bundleOnlyRoot 'Contents\Windows\2025\BimBridge.AutoCAD2025.dll')) 'The -BundleDirectory-only run staged no AutoCAD 2025 module.'
+}
 
 # Cleanup only ever runs on scratch directories this test created itself, and each
 # one is proven to be a direct child of the scratch root and not a reparse point.

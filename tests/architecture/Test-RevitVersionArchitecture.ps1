@@ -1,3 +1,5 @@
+param([switch]$WithoutAutodesk)
+
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version 2.0
 
@@ -912,24 +914,26 @@ function Remove-RecordedRevitOutputDirectory([string]$Year) {
     Remove-Item -LiteralPath $yearRoot -Recurse -Force
 }
 
-$offlineYear = '2024'
-$offlineTargetFramework = [string]$entryByYear[$offlineYear].RevitTargetFramework
-Remove-RecordedRevitOutputDirectory $offlineYear
-$offlineRecordedRun = Invoke-RecordedRevitBuilder @('-Version', $offlineYear, '-Offline') 'offline-on'
-Assert-Pass ($offlineRecordedRun.run.exitCode -eq 0) "The -Offline staging-root invocation failed: $($offlineRecordedRun.run.text)"
-Assert-Pass (-not [string]::IsNullOrWhiteSpace($offlineRecordedRun.recorded)) "The recording shim never saw a dotnet invocation: $($offlineRecordedRun.run.text)"
-Assert-Pass ($offlineRecordedRun.recorded -like 'build*BimBridge.Revit.csproj*') "The recorded dotnet invocation is not the Revit builder's own build: $($offlineRecordedRun.recorded)"
-Assert-Pass ($offlineRecordedRun.recorded -like '*-p:NuGetAudit=false*') "The Revit builder did not pass -p:NuGetAudit=false with -Offline: $($offlineRecordedRun.recorded)"
-Assert-Pass (@([regex]::Matches($offlineRecordedRun.recorded, [regex]::Escape('-p:NuGetAudit=false'))).Count -eq 1) "The Revit builder passed the audit switch more than once: $($offlineRecordedRun.recorded)"
-Assert-Pass (Test-Path -LiteralPath (Join-Path $repositoryRoot "src\BimBridge.Revit\bin\Debug\$offlineYear\$offlineTargetFramework\BimBridge.Revit$offlineYear.dll") -PathType Leaf) 'The recorded run did not reach its build output.'
+if (-not $WithoutAutodesk) {
+    $offlineYear = '2024'
+    $offlineTargetFramework = [string]$entryByYear[$offlineYear].RevitTargetFramework
+    Remove-RecordedRevitOutputDirectory $offlineYear
+    $offlineRecordedRun = Invoke-RecordedRevitBuilder @('-Version', $offlineYear, '-Offline') 'offline-on'
+    Assert-Pass ($offlineRecordedRun.run.exitCode -eq 0) "The -Offline staging-root invocation failed: $($offlineRecordedRun.run.text)"
+    Assert-Pass (-not [string]::IsNullOrWhiteSpace($offlineRecordedRun.recorded)) "The recording shim never saw a dotnet invocation: $($offlineRecordedRun.run.text)"
+    Assert-Pass ($offlineRecordedRun.recorded -like 'build*BimBridge.Revit.csproj*') "The recorded dotnet invocation is not the Revit builder's own build: $($offlineRecordedRun.recorded)"
+    Assert-Pass ($offlineRecordedRun.recorded -like '*-p:NuGetAudit=false*') "The Revit builder did not pass -p:NuGetAudit=false with -Offline: $($offlineRecordedRun.recorded)"
+    Assert-Pass (@([regex]::Matches($offlineRecordedRun.recorded, [regex]::Escape('-p:NuGetAudit=false'))).Count -eq 1) "The Revit builder passed the audit switch more than once: $($offlineRecordedRun.recorded)"
+    Assert-Pass (Test-Path -LiteralPath (Join-Path $repositoryRoot "src\BimBridge.Revit\bin\Debug\$offlineYear\$offlineTargetFramework\BimBridge.Revit$offlineYear.dll") -PathType Leaf) 'The recorded run did not reach its build output.'
 
-Remove-RecordedRevitOutputDirectory $offlineYear
-$defaultRecordedRun = Invoke-RecordedRevitBuilder @('-Version', $offlineYear) 'offline-off'
-Assert-Pass ($defaultRecordedRun.run.exitCode -eq 0) "The default (audit-on) invocation failed: $($defaultRecordedRun.run.text)"
-Assert-Pass (-not [string]::IsNullOrWhiteSpace($defaultRecordedRun.recorded)) "The recording shim never saw a dotnet invocation: $($defaultRecordedRun.run.text)"
-Assert-Pass ($defaultRecordedRun.recorded -notlike '*NuGetAudit*') "The Revit builder disabled the NuGet vulnerability audit without -Offline: $($defaultRecordedRun.recorded)"
-Assert-Pass ($defaultRecordedRun.recorded -like 'build*BimBridge.Revit.csproj*') "The default recorded invocation is not the Revit builder's own build: $($defaultRecordedRun.recorded)"
-Assert-Pass ($defaultRecordedRun.recorded -notmatch '--offline') "The Revit builder passed an offline restore switch: $($defaultRecordedRun.recorded)"
+    Remove-RecordedRevitOutputDirectory $offlineYear
+    $defaultRecordedRun = Invoke-RecordedRevitBuilder @('-Version', $offlineYear) 'offline-off'
+    Assert-Pass ($defaultRecordedRun.run.exitCode -eq 0) "The default (audit-on) invocation failed: $($defaultRecordedRun.run.text)"
+    Assert-Pass (-not [string]::IsNullOrWhiteSpace($defaultRecordedRun.recorded)) "The recording shim never saw a dotnet invocation: $($defaultRecordedRun.run.text)"
+    Assert-Pass ($defaultRecordedRun.recorded -notlike '*NuGetAudit*') "The Revit builder disabled the NuGet vulnerability audit without -Offline: $($defaultRecordedRun.recorded)"
+    Assert-Pass ($defaultRecordedRun.recorded -like 'build*BimBridge.Revit.csproj*') "The default recorded invocation is not the Revit builder's own build: $($defaultRecordedRun.recorded)"
+    Assert-Pass ($defaultRecordedRun.recorded -notmatch '--offline') "The Revit builder passed an offline restore switch: $($defaultRecordedRun.recorded)"
+}
 
 # A render-only run never reaches dotnet at all, and -Offline is still accepted
 # (and still inert) on that path, so a machine with no adapter build can verify
@@ -952,56 +956,58 @@ Assert-Pass ([string]$renderedManifestXml.RevitAddIns.AddIn.Assembly -eq 'BimBri
 # Real-builder execution shape, using only installed releases and only staging
 # directories this test created itself.
 # ---------------------------------------------------------------------------
-$realBundle = Join-Path $stagingWorkspace 'revit-bundles\real-bundle'
-New-Item -ItemType Directory -Force -Path $realBundle | Out-Null
-$staleFile = Join-Path $realBundle 'src\BimBridge.Revit\bin\Debug\2999\stale-product.dll'
-New-Item -ItemType Directory -Force -Path (Split-Path -Parent $staleFile) | Out-Null
-Set-Content -LiteralPath $staleFile -Value 'stale product from a previous stage' -Encoding ASCII
+if (-not $WithoutAutodesk) {
+    $realBundle = Join-Path $stagingWorkspace 'revit-bundles\real-bundle'
+    New-Item -ItemType Directory -Force -Path $realBundle | Out-Null
+    $staleFile = Join-Path $realBundle 'src\BimBridge.Revit\bin\Debug\2999\stale-product.dll'
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $staleFile) | Out-Null
+    Set-Content -LiteralPath $staleFile -Value 'stale product from a previous stage' -Encoding ASCII
 
-$bundleRun = Invoke-RevitBuilder @('-Version', '2024,2026', '-SkipUnavailable', '-StagingRoot', (Join-Path $stagingWorkspace 'revit-bundles'), '-BundleDirectory', $realBundle)
-Assert-Pass ($bundleRun.exitCode -eq 0) "The explicit staging builder invocation failed: $($bundleRun.text)"
-$bundlePayload = ConvertFrom-Json (Get-BuilderJsonPayload $bundleRun.text)
-$bundleResults = @((Get-PropertyValue $bundlePayload 'results'))
-Assert-Pass ($bundleResults.Count -eq 2) "The explicit staging envelope does not carry two result rows: $($bundleRun.text)"
-Assert-Pass (@($bundleResults | Where-Object { [string]$_.version -eq '2024' -and [string]$_.status -eq 'built' }).Count -eq 1) 'The explicit staging envelope lost the built Revit 2024 row.'
-Assert-Pass (@($bundleResults | Where-Object { [string]$_.version -eq '2026' -and [string]$_.status -eq 'unavailable' }).Count -eq 1) 'The explicit staging envelope lost the unavailable Revit 2026 row.'
-$bundleSection = Get-PropertyValue $bundlePayload 'bundle'
-Assert-Pass ((Get-PropertyValue $bundleSection 'bundleDirectory') -eq $realBundle) 'The envelope bundle directory is not the requested staging directory.'
-$manifestPath = Join-Path $realBundle 'bundle-manifest.json'
-Assert-Pass (Test-Path -LiteralPath $manifestPath -PathType Leaf) 'The staged bundle has no bundle-manifest.json.'
-Assert-Pass (-not (Test-Path -LiteralPath $staleFile)) 'Positive case: the stale product inside the bundle survived the rebuild.'
-$bundleManifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
-Assert-Pass (@((Get-PropertyValue $bundleManifest 'files')).Count -ge 1) 'The staged Revit index carries no file entries.'
-$bundleRootFull = [IO.Path]::GetFullPath($realBundle)
-foreach ($entry in @((Get-PropertyValue $bundleManifest 'files'))) {
-    # Contract (docs/architecture.md, "Staged packages, builder output, and
-    # gaps"): the Revit staging index uses forward slashes relative to the bundle
-    # root, and repeats the same value in `path` and `relativePath`.
-    Assert-Pass (-not ([string]$entry.relativePath).Contains('\')) "A staged index path is not forward-slash normalised: $($entry.relativePath)"
-    Assert-Pass (-not ([string]$entry.relativePath).StartsWith('/')) "A staged index path is not relative to the bundle root: $($entry.relativePath)"
-    Assert-Pass ([string]$entry.path -eq [string]$entry.relativePath) "The staged index path and relativePath bases diverged: $($entry.path) vs $($entry.relativePath)"
-    Assert-Pass (Test-Path -LiteralPath (Join-Path $bundleRootFull ([string]$entry.relativePath -replace '/', '\')) -PathType Leaf) "A staged index entry does not resolve from the bundle root: $($entry.relativePath)"
+    $bundleRun = Invoke-RevitBuilder @('-Version', '2024,2026', '-SkipUnavailable', '-StagingRoot', (Join-Path $stagingWorkspace 'revit-bundles'), '-BundleDirectory', $realBundle)
+    Assert-Pass ($bundleRun.exitCode -eq 0) "The explicit staging builder invocation failed: $($bundleRun.text)"
+    $bundlePayload = ConvertFrom-Json (Get-BuilderJsonPayload $bundleRun.text)
+    $bundleResults = @((Get-PropertyValue $bundlePayload 'results'))
+    Assert-Pass ($bundleResults.Count -eq 2) "The explicit staging envelope does not carry two result rows: $($bundleRun.text)"
+    Assert-Pass (@($bundleResults | Where-Object { [string]$_.version -eq '2024' -and [string]$_.status -eq 'built' }).Count -eq 1) 'The explicit staging envelope lost the built Revit 2024 row.'
+    Assert-Pass (@($bundleResults | Where-Object { [string]$_.version -eq '2026' -and [string]$_.status -eq 'unavailable' }).Count -eq 1) 'The explicit staging envelope lost the unavailable Revit 2026 row.'
+    $bundleSection = Get-PropertyValue $bundlePayload 'bundle'
+    Assert-Pass ((Get-PropertyValue $bundleSection 'bundleDirectory') -eq $realBundle) 'The envelope bundle directory is not the requested staging directory.'
+    $manifestPath = Join-Path $realBundle 'bundle-manifest.json'
+    Assert-Pass (Test-Path -LiteralPath $manifestPath -PathType Leaf) 'The staged bundle has no bundle-manifest.json.'
+    Assert-Pass (-not (Test-Path -LiteralPath $staleFile)) 'Positive case: the stale product inside the bundle survived the rebuild.'
+    $bundleManifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
+    Assert-Pass (@((Get-PropertyValue $bundleManifest 'files')).Count -ge 1) 'The staged Revit index carries no file entries.'
+    $bundleRootFull = [IO.Path]::GetFullPath($realBundle)
+    foreach ($entry in @((Get-PropertyValue $bundleManifest 'files'))) {
+        # Contract (docs/architecture.md, "Staged packages, builder output, and
+        # gaps"): the Revit staging index uses forward slashes relative to the bundle
+        # root, and repeats the same value in `path` and `relativePath`.
+        Assert-Pass (-not ([string]$entry.relativePath).Contains('\')) "A staged index path is not forward-slash normalised: $($entry.relativePath)"
+        Assert-Pass (-not ([string]$entry.relativePath).StartsWith('/')) "A staged index path is not relative to the bundle root: $($entry.relativePath)"
+        Assert-Pass ([string]$entry.path -eq [string]$entry.relativePath) "The staged index path and relativePath bases diverged: $($entry.path) vs $($entry.relativePath)"
+        Assert-Pass (Test-Path -LiteralPath (Join-Path $bundleRootFull ([string]$entry.relativePath -replace '/', '\')) -PathType Leaf) "A staged index entry does not resolve from the bundle root: $($entry.relativePath)"
+    }
+    $unavailable = @((Get-PropertyValue $bundleManifest 'unavailableReleases'))
+    Assert-Pass (@($unavailable | Where-Object { [string]$_.id -eq 'revit-2026-not-installed' }).Count -eq 1) 'The staged index lost the revit-2026-not-installed gap record.'
+    Assert-Pass (@($unavailable | Where-Object { [string]$_.id -eq 'revit-2026-not-installed' -and @($_.probeEvidence.probes).Count -gt 0 }).Count -eq 1) 'The staged gap record lost its probe evidence.'
+    Assert-Pass (@($unavailable | Where-Object { [string]$_.severity -eq 'blocking' -and $_.fakeSuccess -eq $false }).Count -eq 1) 'The staged gap record is not a blocking, non-fabricated gap.'
+    Assert-Pass (Test-Path -LiteralPath $siblingSentinel) 'The sibling sentinel outside the staging root was removed by the real builder.'
+    Assert-Pass ((Get-FileHash -LiteralPath $siblingSentinel -Algorithm SHA256).Hash -eq $siblingSentinelHash) 'The sibling sentinel outside the staging root changed content.'
+    Assert-Pass (Test-Path -LiteralPath $escapeWitness) 'The real builder reached the reparse-point escape witness.'
+    Assert-Pass (Test-Path -LiteralPath $unsafeExternalSentinel) 'The real builder reached the repository-external sentinel.'
+    Assert-Pass (Test-Path -LiteralPath $intermediateWitness) 'The real builder reached the intermediate-junction witness.'
+
+    # Legacy default output: with neither -BundleDirectory nor
+    # -RenderManifestDirectory the top-level JSON array contract is preserved.
+    $legacyRun = Invoke-RevitBuilder @('-Version', '2027')
+    Assert-Pass ($legacyRun.exitCode -eq 0) "The default (no staging) builder invocation failed: $($legacyRun.text)"
+    $legacyJson = Get-BuilderJsonPayload $legacyRun.text
+    Assert-Pass ($legacyJson.TrimStart().StartsWith('[')) 'The default output does not start with a JSON array.'
+    $legacyParse = ConvertFrom-Json $legacyJson
+    Assert-Pass (@($legacyParse).Count -eq 1) 'The default output is not iterable as an array after ConvertFrom-Json.'
+    Assert-Pass (@($legacyParse | Where-Object { [string]$_.version -eq '2027' }).Count -eq 1) 'The default output lost the Revit 2027 result row.'
+    Assert-Pass ((Get-PropertyValue $legacyParse 'bundle') -eq $null -and (Get-PropertyValue $legacyParse 'results') -eq $null) 'The default output is still an envelope instead of the legacy array.'
 }
-$unavailable = @((Get-PropertyValue $bundleManifest 'unavailableReleases'))
-Assert-Pass (@($unavailable | Where-Object { [string]$_.id -eq 'revit-2026-not-installed' }).Count -eq 1) 'The staged index lost the revit-2026-not-installed gap record.'
-Assert-Pass (@($unavailable | Where-Object { [string]$_.id -eq 'revit-2026-not-installed' -and @($_.probeEvidence.probes).Count -gt 0 }).Count -eq 1) 'The staged gap record lost its probe evidence.'
-Assert-Pass (@($unavailable | Where-Object { [string]$_.severity -eq 'blocking' -and $_.fakeSuccess -eq $false }).Count -eq 1) 'The staged gap record is not a blocking, non-fabricated gap.'
-Assert-Pass (Test-Path -LiteralPath $siblingSentinel) 'The sibling sentinel outside the staging root was removed by the real builder.'
-Assert-Pass ((Get-FileHash -LiteralPath $siblingSentinel -Algorithm SHA256).Hash -eq $siblingSentinelHash) 'The sibling sentinel outside the staging root changed content.'
-Assert-Pass (Test-Path -LiteralPath $escapeWitness) 'The real builder reached the reparse-point escape witness.'
-Assert-Pass (Test-Path -LiteralPath $unsafeExternalSentinel) 'The real builder reached the repository-external sentinel.'
-Assert-Pass (Test-Path -LiteralPath $intermediateWitness) 'The real builder reached the intermediate-junction witness.'
-
-# Legacy default output: with neither -BundleDirectory nor
-# -RenderManifestDirectory the top-level JSON array contract is preserved.
-$legacyRun = Invoke-RevitBuilder @('-Version', '2027')
-Assert-Pass ($legacyRun.exitCode -eq 0) "The default (no staging) builder invocation failed: $($legacyRun.text)"
-$legacyJson = Get-BuilderJsonPayload $legacyRun.text
-Assert-Pass ($legacyJson.TrimStart().StartsWith('[')) 'The default output does not start with a JSON array.'
-$legacyParse = ConvertFrom-Json $legacyJson
-Assert-Pass (@($legacyParse).Count -eq 1) 'The default output is not iterable as an array after ConvertFrom-Json.'
-Assert-Pass (@($legacyParse | Where-Object { [string]$_.version -eq '2027' }).Count -eq 1) 'The default output lost the Revit 2027 result row.'
-Assert-Pass ((Get-PropertyValue $legacyParse 'bundle') -eq $null -and (Get-PropertyValue $legacyParse 'results') -eq $null) 'The default output is still an envelope instead of the legacy array.'
 
 # An unavailable release is still reported in the legacy array, with its gap id.
 $gapRun = Invoke-RevitBuilder @('-Version', '2026', '-SkipUnavailable')

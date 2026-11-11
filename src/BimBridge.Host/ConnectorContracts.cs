@@ -53,7 +53,7 @@ public sealed class ConnectorExecutionTarget
 
 public static class ConnectorTargetGuard
 {
-    public static string? Validate(ConnectorExecutionTarget? expected, ConnectorInfo actual)
+    public static string? Validate(ConnectorExecutionTarget? expected, ConnectorInfo actual, bool requireDocument = true)
     {
         if (expected == null) return null;
         if (!string.Equals(expected.Application, actual.Application, StringComparison.OrdinalIgnoreCase))
@@ -67,6 +67,7 @@ public static class ConnectorTargetGuard
             return "instance_changed";
         if (expected.ProcessId != actual.ProcessId)
             return "process_changed";
+        if (!requireDocument) return null;
         if (expected.Document == null || actual.Document == null)
             return "document_missing";
         if (!string.Equals(expected.Document.Id, actual.Document.Id, StringComparison.OrdinalIgnoreCase))
@@ -143,6 +144,7 @@ public sealed class TaskSnapshot
     public string TaskId { get; set; } = "";
     public string Name { get; set; } = "";
     public string Owner { get; set; } = "";
+    public string? DocumentTitle { get; set; }
     public string Status { get; set; } = "";
     public int QueuePosition { get; set; }
     public double LeaseRemainingSeconds { get; set; }

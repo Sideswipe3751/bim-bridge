@@ -69,6 +69,11 @@ check or installation.
 For a multi-agent modeling request, agents may prepare independent specifications
 and code in parallel. Discover the installed task coordination tools through the
 normal provider search/schema workflow; do not assume an older Host supports them.
+For the queue board, discover `task_status` and call it through
+`aec_call_provider_read` with the exact `instanceId`. Match `currentTaskId` to
+its task row and show queued rows by `queuePosition`. Show `owner` as a
+caller-supplied label and `documentTitle` as the model at submission; report
+missing model metadata as unknown on older connectors. No task token is needed.
 Submit one named task against an explicit instance, retain its private task token,
 and poll until active before any Autodesk execution. Renew queued and active leases
 before expiry. Do not share tokens with unrelated agents or log them.

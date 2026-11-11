@@ -357,7 +357,8 @@ public sealed class ConnectorServer : IDisposable
     private void HandleTaskControl(HttpListenerContext context, ExecutePayload payload)
     {
         var control = payload.TaskControl;
-        var targetError = ConnectorTargetGuard.Validate(payload.Target, _executor.GetCachedInfo());
+        var info = _executor.GetCachedInfo();
+        var targetError = ConnectorTargetGuard.Validate(payload.Target, info, requireDocument: control?.Action != "status");
         if (payload.Target == null || targetError != null)
         {
             WriteJson(context, 409, new { error = targetError ?? "exact_target_required" });
@@ -373,8 +374,17 @@ public sealed class ConnectorServer : IDisposable
             object result;
             switch (control.Action)
             {
-                case "status": result = new { tasks = _tasks.Status() }; break;
-                case "submit": result = _tasks.Submit(control.Name ?? "", control.Owner ?? "", control.LeaseSeconds); break;
+                case "status":
+                    var tasks = _tasks.Status();
+                    result = new
+                    {
+                        currentTaskId = Array.Find(tasks, task => task.Status == "active" || task.Status == "draining")?.TaskId,
+                        tasks
+                    };
+                    break;
+                case "submit":
+                    result = _tasks.Submit(control.Name ?? "", control.Owner ?? "", control.LeaseSeconds, info.Document!.Title);
+                    break;
                 case "poll": result = _tasks.Poll(control.TaskId ?? "", control.Token ?? ""); break;
                 case "renew": result = _tasks.Renew(control.TaskId ?? "", control.Token ?? "", control.LeaseSeconds); break;
                 case "release": result = _tasks.Release(control.TaskId ?? "", control.Token ?? ""); break;

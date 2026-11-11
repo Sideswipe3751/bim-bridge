@@ -28,8 +28,8 @@ def _tool(name: str, description: str, properties: dict[str, Any], required: lis
 
 
 TOOLS = {
-    "task_status": _tool("task_status", "Inspect the instance task queue without exposing ownership tokens.", _IDENTITY, ["instanceId"], read=True),
-    "task_submit": _tool("task_submit", "Queue one named task for exclusive access to an exact host instance.",
+    "task_status": _tool("task_status", "Read the instance queue board: current holder, applicant labels, FIFO positions and model titles recorded at submission. Requires no task token and exposes none.", _IDENTITY, ["instanceId"], read=True),
+    "task_submit": _tool("task_submit", "Queue one named task for exclusive access to an exact host instance. The board records the active model title at submission and displays the caller-supplied owner label.",
                          {**_IDENTITY, "name": {**_STRING, "maxLength": 200}, "owner": {**_STRING, "maxLength": 200}, "leaseSeconds": _LEASE},
                          ["instanceId", "name", "owner"]),
     "task_poll": _tool("task_poll", "Poll the caller's task; only the lease holder may execute task steps.", _CREDENTIALS, list(_CREDENTIALS)),

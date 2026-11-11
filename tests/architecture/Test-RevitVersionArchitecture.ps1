@@ -747,14 +747,11 @@ Assert-Pass ($repoRootMessage.Contains($repoRootJunction)) "The refusal does not
 Assert-Pass (Test-Path -LiteralPath $repoRootWitness) 'The repository-root refusal removed the external witness file.'
 Assert-Pass ((Get-FileHash -LiteralPath $repoRootWitness -Algorithm SHA256).Hash -eq $repoRootWitnessHash) 'The repository-root refusal changed the external witness content.'
 Assert-Pass (-not (Test-Path -LiteralPath (Join-Path $repoRootTarget 'artifacts'))) 'The repository-root refusal created the containment namespace through the junction.'
-# The real repository root of this working copy carries the OneDrive placeholder
-# reparse attribute, and the walk must still accept it: the classification is by
-# reparse tag, so a benign placeholder is never refused.
-Assert-Pass ([bool]((Get-Item -LiteralPath $repositoryRoot -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)) 'This working copy no longer exercises the benign reparse repository root.'
+# The checkout may be a plain directory or a benign cloud placeholder.
 Assert-Pass (-not (Test-LinkReparsePoint $repositoryRoot)) 'The repository root was classified as a link reparse point.'
 $liveRepoRootAccepted = $null
 try { $liveRepoRootAccepted = [string](Get-SafeStagingRoot (Join-Path $stagingNamespace 'not-yet-created') $stagingNamespace) } catch { $liveRepoRootAccepted = $null }
-Assert-Pass ($liveRepoRootAccepted -eq (Join-Path $stagingNamespace 'not-yet-created')) 'The containment-chain walk refused the benign-reparse repository root of this working copy.'
+Assert-Pass ($liveRepoRootAccepted -eq (Join-Path $stagingNamespace 'not-yet-created')) 'The containment-chain walk refused the working-copy repository root.'
 & (Join-Path $env:SystemRoot 'System32\cmd.exe') /c rmdir "$repoRootJunction" 2>&1 | Out-Null
 Assert-Pass (-not (Test-Path -LiteralPath $repoRootJunction)) 'The repository-root junction fixture could not be de-linked.'
 Assert-Pass (-not (Test-LinkReparsePoint $repoRootTarget)) 'Refusing to clean the repository-root fixture at a link reparse point.'

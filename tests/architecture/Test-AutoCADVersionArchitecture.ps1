@@ -556,7 +556,6 @@ while ($cloudProbePath -and (Test-Path -LiteralPath $cloudProbePath)) {
     if ([string]::IsNullOrEmpty($nextProbe) -or $nextProbe -eq $cloudProbePath) { break }
     $cloudProbePath = $nextProbe
 }
-Assert-Pass ($chainReparseFindings.Count -gt 0) 'The repository chain carries no reparse attribute at all, so cloud-tag acceptance cannot be proven on this host.'
 $cloudTaggedPaths = @($chainReparseFindings | Where-Object { Test-LinkReparsePoint $_.path })
 Assert-Pass ($cloudTaggedPaths.Count -eq 0) "The repository chain contains a link reparse point, so it is not a clean tree: $(($cloudTaggedPaths | ForEach-Object { $_.path }) -join '; ')"
 # Both entry points must still accept the real repository chain before anything
@@ -564,11 +563,9 @@ Assert-Pass ($cloudTaggedPaths.Count -eq 0) "The repository chain contains a lin
 $liveContainmentRoot = Join-Path $repositoryRoot 'artifacts\staging'
 $liveStagingRoot = Join-Path $liveContainmentRoot 'autocad-bundles'
 Assert-Pass (([string](Get-SafeStagingRoot $liveStagingRoot $liveContainmentRoot)) -eq $liveStagingRoot) 'A benign cloud reparse point on the repository chain made the staging root unusable.'
-Assert-Pass (Test-Path -LiteralPath $liveContainmentRoot) 'The real artifacts staging containment root is missing from this workspace.'
 $liveChainMessage = $null
 try { $null = Assert-ContainedStagingDirectory (Join-Path $liveStagingRoot 'bundle-chain-acceptance') $liveStagingRoot $repositoryRoot } catch { $liveChainMessage = [string]$_.Exception.Message }
 Assert-Pass ([string]::IsNullOrWhiteSpace($liveChainMessage)) "The new containment-chain walk refused a clean repository chain: $liveChainMessage"
-Assert-Pass ([bool](Test-LinkReparseTag (Get-LinkReparsePointTag $repositoryRoot)) -eq $false) 'The cloud reparse tag of the repository root was misread as a link.'
 
 # The tag classifier is exercised directly with a controlled tag matrix, because
 # cloud placeholders cannot be created on demand. Only the two link tags are
@@ -751,14 +748,11 @@ Assert-Pass ($repoRootMessage.Contains($repoRootJunction)) "The refusal does not
 Assert-Pass (Test-Path -LiteralPath $repoRootWitness) 'The repository-root refusal removed the external witness file.'
 Assert-Pass ((Get-FileHash -LiteralPath $repoRootWitness -Algorithm SHA256).Hash -eq $repoRootWitnessHash) 'The repository-root refusal changed the external witness content.'
 Assert-Pass (-not (Test-Path -LiteralPath (Join-Path $repoRootTarget 'artifacts'))) 'The repository-root refusal created the containment namespace through the junction.'
-# The real repository root of this working copy carries the OneDrive placeholder
-# reparse attribute, and the walk must still accept it: the classification is by
-# reparse tag, so a benign placeholder is never refused.
-Assert-Pass ([bool]((Get-Item -LiteralPath $repositoryRoot -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)) 'This working copy no longer exercises the benign reparse repository root.'
+# The checkout may be a plain directory or a benign cloud placeholder.
 Assert-Pass (-not (Test-LinkReparsePoint $repositoryRoot)) 'The repository root was classified as a link reparse point.'
 $liveRepoRootAccepted = $null
 try { $liveRepoRootAccepted = [string](Get-SafeStagingRoot (Join-Path $stagingNamespace 'not-yet-created') $stagingNamespace) } catch { $liveRepoRootAccepted = $null }
-Assert-Pass ($liveRepoRootAccepted -eq (Join-Path $stagingNamespace 'not-yet-created')) 'The containment-chain walk refused the benign-reparse repository root of this working copy.'
+Assert-Pass ($liveRepoRootAccepted -eq (Join-Path $stagingNamespace 'not-yet-created')) 'The containment-chain walk refused the working-copy repository root.'
 & (Join-Path $env:SystemRoot 'System32\cmd.exe') /c rmdir "$repoRootJunction" 2>&1 | Out-Null
 Assert-Pass (-not (Test-Path -LiteralPath $repoRootJunction)) 'The repository-root junction fixture could not be de-linked.'
 Assert-Pass (-not (Test-LinkReparsePoint $repoRootTarget)) 'Refusing to clean the repository-root fixture at a link reparse point.'
@@ -779,7 +773,6 @@ $unreadableMessage = Assert-Rejected 'unreadable reparse tag through the classif
 Assert-Pass (-not [string]::IsNullOrWhiteSpace($unreadableMessage)) 'The classifier treated an unqueryable path as a benign target.'
 Assert-Pass ([bool](Test-Path -LiteralPath $unreadableCandidate) -eq $false) 'The unreadable-tag fixture was created during the refusal, so nothing was proven.'
 Assert-Pass ([bool](Test-LinkReparsePoint $repositoryRoot) -eq $false) 'The repository root stopped being accepted after the unreadable-tag refusal.'
-Assert-Pass ((Get-LinkReparsePointTag $repositoryRoot) -match '^(?:0x)?[0-9a-fA-F]{8}$') 'The restored tag probe no longer reads the cloud reparse tag of the repository root.'
 
 # The real builder must refuse an unsafe bundle directory before it builds
 # anything, so a rejection cannot be masked by a later build failure.

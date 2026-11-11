@@ -61,6 +61,27 @@ installation still does not authorize native Host installation or repair; the
 experimental adapter reports an unavailable Host and stops. See
 [the Kimi adapter guide](docs/kimi-adapter.md).
 
+### DeepSeek Harness
+
+DeepSeek Harness (DSH) is an experimental adapter over the same installed Host.
+It is a stdio MCP projection only: the tools appear in a DSH session as
+`mcp__bim-bridge__aec_*`, and the adapter contains no runtime or Autodesk logic.
+DSH is a developer preview, so the adapter is pinned to the harness version in
+[the adapter guide](docs/deepseek-harness-adapter.md).
+
+```powershell
+# 1. Read-only status; never installs or edits DSH configuration.
+& .\adapters\deepseek-harness\skills\bim-bridge\scripts\Get-BimBridgeDshStatus.ps1
+
+# 2. Print the cordis patch row and add it to the target profile's cordis.patch.yml.
+& .\adapters\deepseek-harness\skills\bim-bridge\scripts\Get-BimBridgeDshMcpConfig.ps1 -Style cordis-patch
+```
+
+Make `adapters\deepseek-harness\skills` discoverable to DSH (a junction under
+`%USERPROFILE%\.dsh\skills`, or `customSkillDirs` for the filesystem skill
+provider) so the `bim-bridge` Skill is loaded. The adapter suite is
+`tests\adapters\deepseek-harness\Test-DeepSeekHarnessAdapter.ps1`.
+
 ## Capabilities
 
 - Discovers local Revit and AutoCAD sessions without exposing a network port
@@ -114,6 +135,8 @@ representative set of read/write operations pass inside that product.
   Skill, and MCP adapter over the same installed neutral Host.
 - `adapters/kimi`: experimental Kimi Code Plugin, Skill, and MCP adapter over
   that same Host.
+- `adapters/deepseek-harness`: experimental DeepSeek Harness Skill, cordis MCP
+  row generator, and launcher wrapper over that same Host.
 - `plugins/aec-codex/mcp-server`: version-1 compatibility MCP projection over
   the agent-independent runtime; packaged by the Host installer, not owned by
   the new Codex plugin.
@@ -136,7 +159,8 @@ request with a per-process bearer token. See [the architecture notes](docs/archi
 Prerequisites:
 
 - Windows x64
-- Codex, Tencent WorkBuddy, or Kimi Code for the matching agent adapter
+- Codex, Tencent WorkBuddy, Kimi Code, or DeepSeek Harness for the matching
+  agent adapter
 - AutoCAD 2024–2027 and/or one of the certified Revit releases listed above
 
 BIM Bridge 2.0.0-alpha.4 is available as a signed preview Host release. The
@@ -230,6 +254,7 @@ dotnet run --project tests\BimBridge.Host.Tests -c Release -f net10.0
 & .\tests\architecture\Test-AutoCADVersionArchitecture.ps1
 & .\tests\adapters\workbuddy\Test-WorkBuddyAdapter.ps1
 & .\tests\adapters\kimi\Test-KimiAdapter.ps1
+& .\tests\adapters\deepseek-harness\Test-DeepSeekHarnessAdapter.ps1
 ```
 
 When verified provider artifacts are available, also run:

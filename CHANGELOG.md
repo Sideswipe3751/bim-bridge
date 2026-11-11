@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+- Added an experimental DeepSeek Harness adapter: a thin stdio-MCP projection of
+  the installed Host with a read-only status check, a cordis row generator, a
+  containment-checked launcher, and bundled-Node discovery that needs no `PATH`
+  entry. The `bim-bridge` Skill ships with the adapter, and its suite runs in CI.
+- Verified the adapter end to end on Revit 2024 through DeepSeek Harness
+  `0.1.5-rc.2`: instance discovery, document and selection reads, a bounded
+  write, an intentional-failure rollback, and a restoring write, each confirmed
+  by a separate read-back. The other six installed builds remain unexercised.
+
 ## 2.0.0-alpha.4 - 2026-08-16
 
 - Added credential-free connector descriptor evidence to the read-only Host

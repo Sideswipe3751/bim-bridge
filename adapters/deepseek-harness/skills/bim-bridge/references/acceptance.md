@@ -56,3 +56,22 @@ rollback results, and the evidence location for each step.
 - No other product or year is in scope, even if the repository mentions it.
 - Do not start or stop Autodesk processes this task did not start.
 - Do not install, repair, upgrade, or uninstall any Autodesk product or the Host.
+
+## Recorded acceptance — 2026-11-11 (Revit 2024)
+
+Target: a disposable copy of the test model under `%TEMP%` on instance
+the selected Revit 2024 instance (connector `1.1.0-rc.3`), through a real DeepSeek Harness
+`0.1.5-rc.2` session. Nothing was saved; the test parameter was restored.
+
+| # | Field | Result |
+|---|---|---|
+| 1 | Product installed | PASS — Revit 2024.1 (24.1.11.26) |
+| 2 | Runtime recognized | PASS — connector capabilities listed |
+| 3 | Matching connector deployed | PASS — the selected Revit 2024 instance |
+| 4 | MCP discoverable | PASS — 10 tools; instance listed |
+| 5 | DSH end-to-end result | PASS — reads, bounded write, rollback, restore, each read back |
+
+The other six installed builds are **NOT RUN**: Revit 2025/2027 had no disposable
+document open, and AutoCAD has no deployed connector (`connectors` contains only
+`revit`). Full evidence:
+[`docs/deepseek-harness-acceptance-2026-11-11.md`](../../../../../docs/deepseek-harness-acceptance-2026-11-11.md).

@@ -3,4 +3,8 @@
   <Project Path="src/BimBridge.AutoCAD2024/BimBridge.AutoCAD2024.csproj" />
   <Project Path="src/BimBridge.Revit2024/BimBridge.Revit2024.csproj" />
   <Project Path="tests/BimBridge.Host.Tests/BimBridge.Host.Tests.csproj" />
+  <Project Path="src/BimBridge.LayeredPdf.Core/BimBridge.LayeredPdf.Core.csproj" />
+  <Project Path="src/BimBridge.LayeredPdf.Composer/BimBridge.LayeredPdf.Composer.csproj" />
+  <Project Path="tests/BimBridge.LayeredPdf.Core.Tests/BimBridge.LayeredPdf.Core.Tests.csproj" />
+  <Project Path="tests/BimBridge.LayeredPdf.Composer.Tests/BimBridge.LayeredPdf.Composer.Tests.csproj" />
 </Solution>

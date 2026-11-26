@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <RootNamespace>BimBridge.LayeredPdf.Composer</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <None Update="PDFsharp-LICENSE.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <ProjectReference Include="..\BimBridge.LayeredPdf.Core\BimBridge.LayeredPdf.Core.csproj" />
+    <PackageReference Include="PDFsharp-gdi" Version="6.2.4" />
+  </ItemGroup>
+</Project>

@@ -86,6 +86,8 @@ internal sealed class RevitConnectorExecutor : IConnectorExecutor, IExternalEven
             {
                 if (request.Kind == ConnectorRequestKind.Selection)
                     ExecuteSelection(application, request);
+                else if (request.Operation == "layered_pdf.catalog" || request.Operation == "layered_pdf.export")
+                    ExecuteLayeredPdf(application, request);
                 else if (request.Operation == "view.capture")
                     ExecuteViewCapture(application, request);
                 else if (request.Operation == "family.session")
@@ -277,6 +279,24 @@ internal sealed class RevitConnectorExecutor : IConnectorExecutor, IExternalEven
         }
     }
 
+    private static void ExecuteLayeredPdf(UIApplication application, ConnectorRequest request)
+    {
+        var service = new RevitLayeredPdfService();
+        try
+        {
+            var result = service.Execute(application, request);
+            request.Complete(new ConnectorCompletion { Status = ConnectorRequestStatus.Succeeded,
+                Result = result, RolledBack = request.Operation == "layered_pdf.export",
+                Warnings = service.Warnings.ToList() });
+        }
+        catch (Exception exception)
+        {
+            request.Complete(new ConnectorCompletion { Status = ConnectorRequestStatus.Failed,
+                Message = exception.Message, ErrorType = "layered_pdf_failed",
+                RolledBack = service.ModelRestored, Warnings = service.Warnings.ToList() });
+        }
+    }
+
     private static void ExecuteViewCapture(UIApplication application, ConnectorRequest request)
     {
         if (request.Mode != "read")
@@ -316,8 +336,8 @@ internal sealed class RevitConnectorExecutor : IConnectorExecutor, IExternalEven
             Document = document,
             Capabilities = new List<string>
             {
-                "document.info", "selection.read", "view.capture", "code.read", "code.write", "transaction.rollback", "task.coordination", "family.session", "conduit.ends", "conduit.connect"
-            }
+                "document.info", "selection.read", "view.capture", "code.read", "code.write", "transaction.rollback", "task.coordination", "family.session", "conduit.ends", "conduit.connect", "layered_pdf.catalog"
+            }.Concat(RevitLayeredPdfService.ComposerAvailable ? new[] { "layered_pdf.export" } : Array.Empty<string>()).ToList()
         };
 
     private static ConnectorInfo CloneInfo(ConnectorInfo source) => new ConnectorInfo

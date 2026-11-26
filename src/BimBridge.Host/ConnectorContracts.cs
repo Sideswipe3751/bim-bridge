@@ -205,7 +205,8 @@ public sealed class ConnectorRequest : IDisposable
         ConnectorViewCaptureOptions? viewCapture = null,
         ConnectorFamilySessionOptions? familySession = null,
         string? taskId = null,
-        ConnectorConduitOptions? conduit = null)
+        ConnectorConduitOptions? conduit = null,
+        ConnectorLayeredPdfOptions? layeredPdf = null)
     {
         RequestId = Guid.NewGuid().ToString("N");
         Kind = kind;
@@ -219,6 +220,7 @@ public sealed class ConnectorRequest : IDisposable
         FamilySession = familySession;
         TaskId = taskId;
         Conduit = conduit;
+        LayeredPdf = layeredPdf;
         CreatedAtUtc = DateTime.UtcNow;
         DeadlineUtc = CreatedAtUtc.AddSeconds(timeoutSeconds);
     }
@@ -233,6 +235,7 @@ public sealed class ConnectorRequest : IDisposable
     public string Operation { get; }
     public ConnectorViewCaptureOptions? ViewCapture { get; }
     public ConnectorConduitOptions? Conduit { get; }
+    public ConnectorLayeredPdfOptions? LayeredPdf { get; }
     public ConnectorFamilySessionOptions? FamilySession { get; }
     public string? TaskId { get; }
     public DateTime CreatedAtUtc { get; }

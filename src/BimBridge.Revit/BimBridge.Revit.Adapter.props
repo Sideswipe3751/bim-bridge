@@ -16,6 +16,7 @@
     <AssemblyMetadata Include="RevitVersion" Value="$(RevitVersion)" />
     <AssemblyMetadata Include="RevitRuntimeFamily" Value="$(RevitRuntimeFamily)" />
     <ProjectReference Include="$(MSBuildThisFileDirectory)..\BimBridge.Host\BimBridge.Host.csproj" />
+    <ProjectReference Include="$(MSBuildThisFileDirectory)..\BimBridge.LayeredPdf.Core\BimBridge.LayeredPdf.Core.csproj" />
     <PackageReference Condition="'$(RevitRuntimeFamily)' == 'netfx'" Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
     <PackageReference Condition="'$(RevitRuntimeFamily)' == 'modern'" Include="Microsoft.CodeAnalysis.CSharp" Version="4.8.0" />
   </ItemGroup>
@@ -35,6 +36,7 @@
       <Private>false</Private>
     </Reference>
     <Compile Include="$(MSBuildThisFileDirectory)*.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)LayeredPdf\*.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Runtime\NetFramework\RuntimeCodeCompiler.cs" Condition="'$(RevitRuntimeFamily)' == 'netfx'" />
     <Compile Include="$(MSBuildThisFileDirectory)Runtime\Modern\RuntimeCodeCompiler.cs" Condition="'$(RevitRuntimeFamily)' == 'modern'" />
   </ItemGroup>

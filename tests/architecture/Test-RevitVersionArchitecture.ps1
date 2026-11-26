@@ -891,16 +891,20 @@ function Invoke-RecordedRevitBuilder([string[]]$BuilderArguments, [string]$Recor
     if (Test-Path -LiteralPath $recordPath) { Remove-Item -LiteralPath $recordPath -Force }
     $shimBody = @"
 @echo off
-echo %*>"$recordPath"
+echo %*>>"$recordPath"
 "$realDotnetPath" %*
 exit /b %ERRORLEVEL%
 "@
     $shimPath = Join-Path $shimDirectory 'dotnet.cmd'
     [IO.File]::WriteAllText($shimPath, ($shimBody -replace "`r?`n", "`r`n"), [Text.UTF8Encoding]::new($false))
     $run = Invoke-RevitBuilder $BuilderArguments $shimDirectory
-    $recorded = ''
-    if (Test-Path -LiteralPath $recordPath -PathType Leaf) { $recorded = (Get-Content -LiteralPath $recordPath -Raw).Trim() }
-    [pscustomobject]@{ run = $run; recorded = $recorded; recordPath = $recordPath }
+    $invocations = @()
+    if (Test-Path -LiteralPath $recordPath -PathType Leaf) { $invocations = @(Get-Content -LiteralPath $recordPath | Where-Object { $_.Trim() }) }
+    $adapterBuilds = @($invocations | Where-Object { $_ -like 'build*BimBridge.Revit.csproj*' })
+    $composerPublishes = @($invocations | Where-Object { $_ -like 'publish*BimBridge.LayeredPdf.Composer.csproj*' })
+    Assert-Pass ($adapterBuilds.Count -eq 1) 'The recording shim must observe exactly one adapter build.'
+    Assert-Pass ($composerPublishes.Count -eq 1) 'The recording shim must observe exactly one composer publish.'
+    [pscustomobject]@{ run = $run; recorded = $adapterBuilds[0]; composer = $composerPublishes[0]; recordPath = $recordPath }
 }
 
 # Each recorded run owns its output path exclusively: the release output
@@ -926,12 +930,15 @@ if (-not $WithoutAutodesk) {
     Assert-Pass (@([regex]::Matches($offlineRecordedRun.recorded, [regex]::Escape('-p:NuGetAudit=false'))).Count -eq 1) "The Revit builder passed the audit switch more than once: $($offlineRecordedRun.recorded)"
     Assert-Pass (Test-Path -LiteralPath (Join-Path $repositoryRoot "src\BimBridge.Revit\bin\Debug\$offlineYear\$offlineTargetFramework\BimBridge.Revit$offlineYear.dll") -PathType Leaf) 'The recorded run did not reach its build output.'
 
+    Assert-Pass ($offlineRecordedRun.composer -like '*-p:NuGetAudit=false*') 'Offline composer publish must explicitly disable its NuGet audit too.'
+    Assert-Pass (Test-Path -LiteralPath (Join-Path $repositoryRoot "src\BimBridge.Revit\bin\Debug\$offlineYear\$offlineTargetFramework\Composer\BimBridge.LayeredPdf.Composer.exe") -PathType Leaf) 'Composer publish did not produce the adjacent executable.'
     Remove-RecordedRevitOutputDirectory $offlineYear
     $defaultRecordedRun = Invoke-RecordedRevitBuilder @('-Version', $offlineYear) 'offline-off'
     Assert-Pass ($defaultRecordedRun.run.exitCode -eq 0) "The default (audit-on) invocation failed: $($defaultRecordedRun.run.text)"
     Assert-Pass (-not [string]::IsNullOrWhiteSpace($defaultRecordedRun.recorded)) "The recording shim never saw a dotnet invocation: $($defaultRecordedRun.run.text)"
     Assert-Pass ($defaultRecordedRun.recorded -notlike '*NuGetAudit*') "The Revit builder disabled the NuGet vulnerability audit without -Offline: $($defaultRecordedRun.recorded)"
     Assert-Pass ($defaultRecordedRun.recorded -like 'build*BimBridge.Revit.csproj*') "The default recorded invocation is not the Revit builder's own build: $($defaultRecordedRun.recorded)"
+    Assert-Pass ($defaultRecordedRun.composer -notlike '*NuGetAudit*') 'Default composer publish must retain the vulnerability audit.'
     Assert-Pass ($defaultRecordedRun.recorded -notmatch '--offline') "The Revit builder passed an offline restore switch: $($defaultRecordedRun.recorded)"
 }
 
@@ -977,6 +984,10 @@ if (-not $WithoutAutodesk) {
     Assert-Pass (-not (Test-Path -LiteralPath $staleFile)) 'Positive case: the stale product inside the bundle survived the rebuild.'
     $bundleManifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
     Assert-Pass (@((Get-PropertyValue $bundleManifest 'files')).Count -ge 1) 'The staged Revit index carries no file entries.'
+    $pdfPaths = @($bundleManifest.files | ForEach-Object { [string]$_.relativePath })
+    Assert-Pass (@($pdfPaths | Where-Object { $_ -like '*/BimBridge.LayeredPdf.Core.dll' -and $_ -notlike '*/Composer/*' }).Count -eq 1) 'Staging omitted the shared layered PDF core.'
+    Assert-Pass (@($pdfPaths | Where-Object { $_ -like '*/Composer/BimBridge.LayeredPdf.Composer.exe' }).Count -eq 1) 'Staging omitted the PDF composer.'
+    Assert-Pass (@($pdfPaths | Where-Object { $_ -like '*/Composer/PDFsharp-LICENSE.txt' }).Count -eq 1) 'Staging omitted the PDFsharp license notice.'
     $bundleRootFull = [IO.Path]::GetFullPath($realBundle)
     foreach ($entry in @((Get-PropertyValue $bundleManifest 'files'))) {
         # Contract (docs/architecture.md, "Staged packages, builder output, and

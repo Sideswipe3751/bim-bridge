@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Iterable
 
+from . import layered_pdf
 from .conduit_tools import OPERATIONS as CONDUIT_OPERATIONS, input_schema as conduit_input_schema
 
 
@@ -256,6 +257,15 @@ def default_registry() -> CapabilityRegistry:
                     if application == "revit"
                     else []
                 ),
+                *([
+                    CapabilityDefinition(
+                        f"revit.{operation}", "revit", (access,), "low" if access == "read" else "high",
+                        input_schema=layered_pdf.input_schema(operation), output_schema=layered_pdf.output_schema(operation),
+                        required_host_capabilities=(operation,), supports_dry_run=access == "write",
+                        idempotency="guaranteed" if access == "read" else "none",
+                        transaction_guarantee="none", rollback_guarantee="none", candidates=(connector,),
+                    ) for operation, access in layered_pdf.OPERATIONS.items()
+                ] if application == "revit" else []),
                 *(
                     [
                         CapabilityDefinition(

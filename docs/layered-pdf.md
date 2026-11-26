@@ -130,7 +130,10 @@ Current local evidence (2026-11-25): Revit 2024/net48, 2025/net8 and
 refused because that release already has a user session open. The Revit 2025
 child exited during Autodesk licensing (`LicenseUpd(1) Adlsdk Error:(3)
 vendor:SERVICE`) before the bootstrap loaded. Native export acceptance remains
-pending; the existing signed release is not promoted by these builds.
+pending; the existing signed release is not promoted by these builds. The
+Revit 2027 child timed out before bootstrap readiness; its journal last recorded
+the licensing stage, so this run supplied no native connector-export evidence.
+Temporary acceptance manifests were removed and existing manifests restored.
 
 Retained native Revit 2024 exports were also replayed through the imported
 composer locally: one output page, three OCGs (Sheet Base plus two viewports),

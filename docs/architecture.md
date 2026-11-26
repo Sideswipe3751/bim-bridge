@@ -1,6 +1,7 @@
 # BIM Bridge architecture contract
 
-Last reviewed: 2026-11-02 (resident family jobs and bounded ready-queue scheduling;
+Last reviewed: 2026-11-25 (layered PDF MCP integration;
+resident family jobs and bounded ready-queue scheduling;
 instance task coordination, concurrent audit journals,
 and disposable Revit 2024 furniture acceptance; prior adapter, staging and version
 authority contracts retained)

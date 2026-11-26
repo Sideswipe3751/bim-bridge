@@ -249,6 +249,36 @@ public sealed class ConnectorServer : IDisposable
             description = string.IsNullOrWhiteSpace(description) ? "Capture Revit view" : description;
             code = "";
         }
+        else if (operation == "layered_pdf.catalog" || operation == "layered_pdf.export")
+        {
+            var exporting = operation == "layered_pdf.export";
+            if (mode != (exporting ? "write" : "read") || payload.Target?.Document == null ||
+                string.IsNullOrWhiteSpace(payload.Target.Document.Id))
+            {
+                WriteJson(context, 400, new { error = "invalid_layered_pdf_request", message = "Layered PDF requires an exact document target and the correct access mode" });
+                return;
+            }
+            if (!_executor.GetCachedInfo().Capabilities.Contains(operation))
+            {
+                WriteJson(context, 409, new { error = "unsupported_capability" });
+                return;
+            }
+            if (exporting)
+            {
+                try
+                {
+                    if (payload.LayeredPdf == null) throw new ArgumentException("layeredPdf options are required");
+                    payload.LayeredPdf.Validate();
+                }
+                catch (ArgumentException exception)
+                {
+                    WriteJson(context, 400, new { error = "invalid_layered_pdf_options", message = exception.Message });
+                    return;
+                }
+            }
+            description = exporting ? "Export one-page layered PDF" : "List Layered PDF sheets and export setups";
+            code = "";
+        }
         else if (operation == "conduit.ends" || operation == "conduit.connect")
         {
             bool connecting = operation == "conduit.connect";
@@ -319,7 +349,8 @@ public sealed class ConnectorServer : IDisposable
             payload.ViewCapture,
             payload.FamilySession,
             payload.TaskId,
-            payload.Conduit);
+            payload.Conduit,
+            payload.LayeredPdf);
         if (!TryQueue(request, out var error, payload.TaskId, payload.TaskToken))
         {
             request.Dispose();
@@ -510,6 +541,7 @@ public sealed class ConnectorServer : IDisposable
         public string? Operation { get; set; }
         public ConnectorViewCaptureOptions? ViewCapture { get; set; }
         public ConnectorConduitOptions? Conduit { get; set; }
+        public ConnectorLayeredPdfOptions? LayeredPdf { get; set; }
         public ConnectorFamilySessionOptions? FamilySession { get; set; }
         public int? TimeoutSeconds { get; set; }
         public ConnectorExecutionTarget? Target { get; set; }

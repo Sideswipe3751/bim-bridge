@@ -85,6 +85,11 @@ jobs:
       - name: Run MCP tests
         run: python -m unittest discover -s tests/mcp -p "test_*.py"
 
+      - name: Run layered PDF engine tests
+        run: |
+          dotnet test tests/BimBridge.LayeredPdf.Core.Tests -c Release
+          dotnet test tests/BimBridge.LayeredPdf.Composer.Tests -c Release
+
       - name: Run shared bridge tests
         # Two constraints the matrix adapter builds already apply. The shared
         # host project targets four frameworks, and its multi-target build fails

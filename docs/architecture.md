@@ -256,6 +256,58 @@ links and the untouched ends before commit. The write preview validates
 arguments and routing without dispatching a mutation. The capability uses
 shared Revit source and does not depend on another installed add-in.
 
+### Layered PDF host capability (development)
+
+`revit.layered_pdf.catalog` and `revit.layered_pdf.export` are shared Revit host
+capabilities projected through the discoverable `bimbridge.layered_pdf.v1`
+provider, the existing ten MCP tools, and `/v1/execute`. Both bind an exact
+instance and active document and honor task ownership. The catalog is read-only;
+export is a high-risk write because it writes files and temporarily changes
+viewport placement/visibility, even though every isolation group is rolled back.
+Gateway dry-run validates arguments and routing only; it never exports or claims
+native validation of sheets or presets.
+
+The original Layered PDF engine is imported into `BimBridge.LayeredPdf.Core`
+(Autodesk-free geometry, naming and job data), shared `BimBridge.Revit/LayeredPdf`
+(native sheet isolation/export), and `BimBridge.LayeredPdf.Composer` (a separate
+self-contained Windows x64 process). There is no dependency on the separately
+installed ribbon add-in or its preferences. PDFsharp stays outside Revit and the
+Python Runtime. The existing matrix build compiles shared product code and
+publishes the composer adjacent to each adapter; development staging includes
+the core DLL and that subdirectory. A missing composer removes export from the
+connector's advertised capabilities. Source compilation on an installed release
+does not certify this new capability or change matrix certification.
+
+Export owns rollback-only `TransactionGroup` instances rather than entering the
+ordinary write transaction. Each temporary transaction uses the shared
+non-interactive failure preprocessor. Deadlines are checked between native
+exports; a running native `Document.Export` cannot be interrupted. Composition
+begins only after native groups have been rolled back, drains stdout/stderr
+concurrently, and has a bounded wait. The composer reopens the staged PDF and
+checks one page and the exact OCG count before publishing it. The returned
+`rolledBack` / `modelRestored` evidence concerns temporary **model** changes.
+Files are not in an atomic native transaction and are not automatically rolled
+back after a failure; the capability declares no whole-request rollback guarantee.
+
+Inputs explicitly select a base sheet and 1-100 source sheets with at most 250
+visible viewports and matching paper coordinates. Output uses a fresh GUID
+subdirectory below `%LOCALAPPDATA%\BIM Bridge\exports\revit\<release>`;
+caller-supplied paths and overwrite are unavailable. Existing ancestor links are
+refused before creating outputs. The result includes path, SHA-256, byte length,
+source IDs, viewport layer count, and model restoration evidence. A successful
+PDF has one OCG per viewport, a Sheet Base OCG, source-sheet groups and optional
+BOX copies. Unplaced standalone views, schedules without viewports and custom
+conduit-marker configuration are not exposed by this MCP slice. Existing GUI
+configuration and release installer behavior are unchanged.
+
+The live acceptance driver now creates two drafting-view sheets in its
+**disposable** project, discovers and calls the provider over stdio MCP, exports
+the overlay, reads back the exact original viewport IDs, and cleans up its
+fixture. Portable engine, transport, routing and HTTP enforcement tests remain
+separate evidence. A blocked application startup or licensing error cannot count
+as native export acceptance. See `docs/layered-pdf.md` for invocation and current
+evidence.
+
 The resolver first removes ineligible candidates by target, runtime/API variant,
 health, trust, and policy. It then prefers the narrowest deterministic provider.
 An agent may request an eligible provider for reproducibility, but policy has the

@@ -48,3 +48,16 @@ BIM Bridge applies documented compatibility and security patches while building
 the pinned providers. The upstream components remain under their original MIT
 licenses, and their copyright and license notices are preserved in source and
 binary distributions.
+
+## PDFsharp GDI (Layered PDF composer)
+
+- Source: https://github.com/empira/PDFsharp/tree/v6.2.4
+- Pinned package: PDFsharp-gdi 6.2.4
+- License: MIT, as distributed at that exact tag and in the NuGet package metadata
+- Copyright: (c) 2001-2026 empira Software GmbH, Troisdorf (Cologne Area), Germany
+- Full notice: `src/BimBridge.LayeredPdf.Composer/PDFsharp-LICENSE.txt`
+
+The license is version-specific; later upstream releases must be reviewed
+independently. The composer runs outside Autodesk and retains the dependency's
+original licensing. Its self-contained .NET runtime and Microsoft dependencies
+remain under their respective distribution licenses.

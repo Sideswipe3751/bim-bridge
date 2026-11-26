@@ -14,6 +14,14 @@ verification, and correlated audit evidence.
 > BIM Bridge 2.0 is a development alpha. Use disposable drawings and models
 > for write testing, keep backups, and review the support matrix below.
 
+## Layered PDF export (development)
+
+The discoverable `bimbridge.layered_pdf.v1` provider exposes printable-sheet
+inspection and one-page PDF overlays with a switchable layer per viewport.
+See [the Layered PDF guide](docs/layered-pdf.md) for MCP arguments, build steps,
+scope and validation status. This requires the updated native connector and its
+adjacent composer; the published Host release is unchanged.
+
 ## One-sentence installation
 
 Copy the same sentence into Codex, Tencent WorkBuddy, or Kimi Code:

@@ -522,6 +522,7 @@ foreach ($year in $requestedYears) {
         throw "Expected Revit $year adapter output was not produced: $assemblyPath"
     }
 
+    & (Join-Path $PSScriptRoot 'Build-LayeredPdfComposer.ps1') -AdapterDirectory $outputDirectory -Configuration $Configuration -Offline:$Offline
     $manifestPath = Join-Path $outputDirectory $resolved.ManifestName
     Write-Utf8NoBom $manifestPath (New-RevitAddInManifest $resolved $assemblyPath $templatePath)
     $validation = Test-RevitAddInManifest $resolved $manifestPath
@@ -582,6 +583,7 @@ if ($bundleRoot) {
             "$($resolved.AssemblyName).dll",
             "$($resolved.AssemblyName).pdb",
             [string]$resolved.ManifestName,
+            'BimBridge.LayeredPdf.Core.dll',
             'BimBridge.Host.dll',
             'BimBridge.Host.pdb'
         )
@@ -595,6 +597,12 @@ if ($bundleRoot) {
             }
             Copy-Item -LiteralPath $sourceFile -Destination (Join-Path $destination $name) -Force
         }
+
+        $composerSource = Join-Path $source 'Composer'
+        if (-not (Test-Path -LiteralPath (Join-Path $composerSource 'BimBridge.LayeredPdf.Composer.exe') -PathType Leaf)) {
+            throw "Expected Revit $year PDF composer is missing."
+        }
+        Copy-Item -LiteralPath $composerSource -Destination (Join-Path $destination 'Composer') -Recurse -Force
 
         $stagedAssembly = Join-Path $destination "$($resolved.AssemblyName).dll"
         if (-not (Test-Path -LiteralPath $stagedAssembly -PathType Leaf)) {

@@ -135,6 +135,8 @@ internal static class Program
             Require(string.Equals(Path.GetExtension(capturePath), ".png", StringComparison.OrdinalIgnoreCase), "Structured view capture did not return PNG output.");
             AddCheck(report, "view_capture", true, "The built-in structured capture capability exported the active Revit view.", capture);
 
+            await VerifyLayeredPdfAsync(mcp, target, report, options);
+
             var successMarker = "BIM_BRIDGE_LIVE_SUCCESS_" + options.RunId;
             var write = await ExecuteAsync(mcp, "aec_execute_write", target,
                 "Create disposable certification marker",
@@ -266,6 +268,49 @@ internal static class Program
             await Task.Delay(500);
         }
         throw new TimeoutException("Timed out waiting for the exact Revit connector instance.");
+    }
+
+    private static async Task VerifyLayeredPdfAsync(McpClient mcp, Dictionary<string, object?> target,
+        LiveReport report, DriverOptions options)
+    {
+        var fixture = await ExecuteAsync(mcp, "aec_execute_write", target, "Create disposable layered PDF sheets",
+            "var type = new FilteredElementCollector(doc).OfClass(typeof(ViewFamilyType)).Cast<ViewFamilyType>().First(v => v.ViewFamily == ViewFamily.Drafting); " +
+            "var titleBlock = new FilteredElementCollector(doc).OfCategory(BuiltInCategory.OST_TitleBlocks).WhereElementIsElementType().FirstOrDefault(); " +
+            "var sheets = new List<long>(); var views = new List<long>(); var viewports = new List<long>(); " +
+            "for (int i=0; i<2; i++) { var view = ViewDrafting.Create(doc,type.Id); view.Name=\"BIM Bridge PDF test \"+i; view.Scale=1; " +
+            "doc.Create.NewDetailCurve(view, Line.CreateBound(new XYZ(0,0,0),new XYZ(1,i==0?0:1,0))); " +
+            "var sheet=ViewSheet.Create(doc,titleBlock==null?ElementId.InvalidElementId:titleBlock.Id); sheet.SheetNumber=\"BB-PDF-\"+i; " +
+            "doc.Regenerate(); var o=sheet.Outline; var vp=Viewport.Create(doc,sheet.Id,view.Id,new XYZ((o.Min.U+o.Max.U)/2,(o.Min.V+o.Max.V)/2,0)); " +
+            "sheets.Add(sheet.Id.Value); views.Add(view.Id.Value); viewports.Add(vp.Id.Value); } return new { sheets, views, viewports };",
+            false, options.Timeout);
+        Require(fixture.GetProperty("status").GetString()=="succeeded", "PDF fixture creation failed");
+        var ids=fixture.GetProperty("result").GetProperty("sheets").EnumerateArray().Select(x=>x.GetInt64()).ToArray();
+        var catalog = await mcp.CallToolAsync("aec_call_provider_read", new { provider="bimbridge.layered_pdf.v1",
+            toolName="list_layered_pdf_sheets", arguments=new { instanceId=target["instanceId"], documentTitle=target["documentTitle"] } }, false, options.Timeout);
+        Require(catalog.GetProperty("status").GetString()=="succeeded", "Layered PDF catalog failed");
+        AddCheck(report,"layered_pdf_catalog",true,"Printable fixture sheets and PDF presets discovered through MCP.",catalog);
+        var exportArgs=new { instanceId=target["instanceId"], documentTitle=target["documentTitle"], baseSheetId=ids[0], sheetIds=ids, fileStem="live-layered-pdf" };
+        var preview=await mcp.CallToolAsync("aec_call_provider_write",new {provider="bimbridge.layered_pdf.v1",toolName="export_layered_pdf", arguments=exportArgs,dryRun=true,timeoutSeconds=300},false,options.Timeout);
+        Require(preview.GetProperty("status").GetString()=="previewed","Layered PDF preview failed");
+        var export=await mcp.CallToolAsync("aec_call_provider_write",new {provider="bimbridge.layered_pdf.v1",toolName="export_layered_pdf",arguments=exportArgs,dryRun=false,timeoutSeconds=300},false,options.Timeout);
+        Require(export.GetProperty("status").GetString()=="succeeded","Layered PDF export failed: "+export);
+        var output=export.GetProperty("result").GetProperty("result");
+        Require(output.GetProperty("modelRestored").GetBoolean(),"Layered PDF did not restore model");
+        Require(output.GetProperty("viewportLayerCount").GetInt32()==2 && output.GetProperty("pageCount").GetInt32()==1,"PDF output has wrong page/layer counts");
+        var pdfPath=output.GetProperty("path").GetString()!;
+        Require(File.Exists(pdfPath),"Layered PDF file is missing");
+        File.Copy(pdfPath,Path.Combine(options.RunDirectory,"layered.pdf"));
+        AddCheck(report,"layered_pdf_export",true,"Two native viewport exports composed into one PDF page with switchable layers.",export);
+        var readback=await ExecuteAsync(mcp,"aec_execute_read",target,"Verify original PDF viewport placements",
+            "return new long[]{"+string.Join(",",ids)+"}.Select(id=>{var s=(ViewSheet)doc.GetElement(new ElementId(id));return new {sheetId=id,viewports=s.GetAllViewports().Select(v=>v.Value).ToList()};}).ToList();",false,options.Timeout);
+        var actual=readback.GetProperty("result").EnumerateArray().SelectMany(s=>s.GetProperty("viewports").EnumerateArray().Select(v=>v.GetInt64())).OrderBy(x=>x).ToArray();
+        var expected=fixture.GetProperty("result").GetProperty("viewports").EnumerateArray().Select(v=>v.GetInt64()).OrderBy(x=>x).ToArray();
+        Require(actual.SequenceEqual(expected),"Temporary viewport isolation changed placement IDs");
+        AddCheck(report,"layered_pdf_rollback",true,"Exact original viewport IDs remained after every temporary isolation transaction.",readback);
+        var deleteIds=ids.Concat(fixture.GetProperty("result").GetProperty("views").EnumerateArray().Select(v=>v.GetInt64())).ToArray();
+        var cleanup=await ExecuteAsync(mcp,"aec_execute_write",target,"Remove disposable PDF fixture",
+            "foreach(var id in new long[]{"+string.Join(",",deleteIds)+"}) {var element=doc.GetElement(new ElementId(id));if(element!=null)doc.Delete(element.Id);} return true;",false,options.Timeout);
+        Require(cleanup.GetProperty("status").GetString()=="succeeded","PDF fixture cleanup failed");
     }
 
     private static async Task<JsonElement> ExecuteAsync(McpClient mcp, string tool, Dictionary<string, object?> target,

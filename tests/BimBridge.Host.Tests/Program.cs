@@ -8,6 +8,7 @@ using BimBridge.Host;
 
 var tests = new List<(string Name, Func<Task> Run)>
 {
+    ("layered PDF option validation", TestLayeredPdfOptions),
     ("family path containment and lifecycle timing", FamilySessionTests.Run),
     ("exclusive task coordinator FIFO, expiry and races", TaskCoordinatorTests.Run),
     ("task control HTTP enforcement", TaskCoordinatorTests.RunHttp),
@@ -69,6 +70,23 @@ static Task TestDescriptorRefreshWhileLocked()
 }
 if (failures.Count > 0) throw new Exception(string.Join(Environment.NewLine, failures));
 
+static Task TestLayeredPdfOptions()
+{
+    new ConnectorLayeredPdfOptions { BaseSheetId=1, SheetIds=new List<long>{2,3} }.Validate();
+    foreach(var options in new[] {
+        new ConnectorLayeredPdfOptions {BaseSheetId=1,SheetIds=new List<long>{2,2}},
+        new ConnectorLayeredPdfOptions {BaseSheetId=0,SheetIds=new List<long>{2}},
+        new ConnectorLayeredPdfOptions {BaseSheetId=1,SheetIds=new List<long>{2},FileStem="../escape"},
+        new ConnectorLayeredPdfOptions {BaseSheetId=1,SheetIds=new List<long>{2},FileStem="CON"},
+        new ConnectorLayeredPdfOptions {BaseSheetId=1,SheetIds=new List<long>{2},SetupName=" "}})
+    {
+        bool rejected=false;
+        try { options.Validate(); } catch(ArgumentException) { rejected=true; }
+        Assert(rejected,"invalid layered PDF options were accepted");
+    }
+    return Task.CompletedTask;
+}
+
 static async Task TestBridge()
 {
     var directory = Path.Combine(Path.GetTempPath(), "bim-bridge-host-tests", Guid.NewGuid().ToString("N"));
@@ -117,6 +135,20 @@ static async Task TestBridge()
         Assert(executor.LastOperation == "view.capture", "view.capture operation was not preserved");
         Assert(executor.LastViewCapture?.ViewName == "{3D}", "view selector was not preserved");
         Assert(executor.LastViewCapture?.PixelSize == 1200, "capture pixel size was not preserved");
+        var exactTarget = new {application="revit",release="2024",instanceId=executor.GetCachedInfo().InstanceId,
+            processId=Process.GetCurrentProcess().Id,document=new {id="doc-1",title="Test"}};
+        var pdfOptions = new ConnectorLayeredPdfOptions {BaseSheetId=11,SheetIds=new List<long>{12,13}};
+        using var pdfBody = new StringContent(JsonSerializer.Serialize(new {mode="write",operation="layered_pdf.export",target=exactTarget,layeredPdf=pdfOptions}),Encoding.UTF8,"application/json");
+        var pdfResponse = await client.PostAsync("/v1/execute",pdfBody);
+        Assert(pdfResponse.StatusCode==HttpStatusCode.Accepted,"layered PDF export was not accepted");
+        Assert(executor.LastLayeredPdf?.BaseSheetId==11 && executor.LastLayeredPdf.SheetIds.SequenceEqual(new long[]{12,13}),"layered PDF options were lost");
+        using var wrongMode = new StringContent(JsonSerializer.Serialize(new {mode="read",operation="layered_pdf.export",target=exactTarget,layeredPdf=pdfOptions}),Encoding.UTF8,"application/json");
+        Assert((await client.PostAsync("/v1/execute",wrongMode)).StatusCode==HttpStatusCode.BadRequest,"PDF export accepted read mode");
+        using var noTarget = new StringContent(JsonSerializer.Serialize(new {mode="write",operation="layered_pdf.export",layeredPdf=pdfOptions}),Encoding.UTF8,"application/json");
+        Assert((await client.PostAsync("/v1/execute",noTarget)).StatusCode==HttpStatusCode.BadRequest,"PDF export accepted a missing document target");
+        pdfOptions.SheetIds = new List<long>{12,12};
+        using var duplicates = new StringContent(JsonSerializer.Serialize(new {mode="write",operation="layered_pdf.export",target=exactTarget,layeredPdf=pdfOptions}),Encoding.UTF8,"application/json");
+        Assert((await client.PostAsync("/v1/execute",duplicates)).StatusCode==HttpStatusCode.BadRequest,"PDF export accepted duplicate sheets");
         server.Dispose();
         Assert(!File.Exists(descriptorPath), "descriptor survived clean shutdown");
     }
@@ -193,6 +225,7 @@ sealed class FakeExecutor : IConnectorExecutor
     public string DocumentTitle { get; set; } = "Test";
     public string? LastOperation { get; private set; }
     public ConnectorViewCaptureOptions? LastViewCapture { get; private set; }
+    public ConnectorLayeredPdfOptions? LastLayeredPdf { get; private set; }
 
     public ConnectorInfo GetCachedInfo() => new ConnectorInfo
     {
@@ -201,13 +234,14 @@ sealed class FakeExecutor : IConnectorExecutor
         ApplicationVersion = "2024",
         ProcessId = Process.GetCurrentProcess().Id,
         Document = new DocumentDescriptor { Id = "doc-1", Title = DocumentTitle },
-        Capabilities = new List<string> { "document.info", "selection.read", "view.capture", "code.read", "code.write" }
+        Capabilities = new List<string> { "document.info", "selection.read", "view.capture", "code.read", "code.write", "layered_pdf.export", "layered_pdf.catalog" }
     };
 
     public void Submit(ConnectorRequest request)
     {
         LastOperation = request.Operation;
         LastViewCapture = request.ViewCapture;
+        LastLayeredPdf = request.LayeredPdf;
         request.SetStatus(ConnectorRequestStatus.Running);
         request.Complete(new ConnectorCompletion
         {
